@@ -2,3 +2,4 @@ streamlit
 google-genai
 requests
 Pillow
+fonts-noto-cjk
