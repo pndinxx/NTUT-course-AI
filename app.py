@@ -11,11 +11,6 @@ from io import BytesIO
 # ==========================================
 st.set_page_config(page_title="北科大課程評價 AI", page_icon="🎓", layout="wide")
 
-# ⚠️ 建議：將來部署時，Key 應該放在 st.secrets，不要直接寫在程式碼裡
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-GOOGLE_SEARCH_API_KEY = st.secrets["GOOGLE_SEARCH_API_KEY"]
-SEARCH_ENGINE_ID = st.secrets["SEARCH_ENGINE_ID"]
-
 # 路徑設定
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_IMAGE_PATH = os.path.join(BASE_DIR, "tier_list.png") 
@@ -25,22 +20,49 @@ RESULT_IMAGE_PATH = os.path.join(BASE_DIR, "final_tier_list.png")
 if 'tier_counts' not in st.session_state:
     st.session_state.tier_counts = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
+# --- 修正點 1: 安全讀取 API Key (防呆機制) ---
+# 這樣寫的好處：在雲端讀 st.secrets，在本機如果沒設 secrets 也不會直接當機，而是跳提示
+def get_secret(key_name):
+    try:
+        return st.secrets[key_name]
+    except FileNotFoundError:
+        return None # 本機沒設檔案
+    except KeyError:
+        return None # 有檔案但沒填這個 Key
+
+GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
+GOOGLE_SEARCH_API_KEY = get_secret("GOOGLE_SEARCH_API_KEY")
+SEARCH_ENGINE_ID = get_secret("SEARCH_ENGINE_ID")
+
+# 如果讀不到 Key，在側邊欄顯示警告輸入框 (方便本機測試)
+if not GEMINI_API_KEY:
+    with st.sidebar:
+        st.warning("⚠️ 偵測到本機執行且未設定 Secrets")
+        GEMINI_API_KEY = st.text_input("請輸入 Gemini API Key", type="password")
+        GOOGLE_SEARCH_API_KEY = st.text_input("請輸入 Google Search Key", type="password")
+        SEARCH_ENGINE_ID = st.text_input("請輸入 Search Engine ID")
+
 # 初始化 Gemini
 @st.cache_resource
-def get_gemini_client():
+def get_gemini_client(api_key):
+    if not api_key: return None
     try:
-        return genai.Client(api_key=GEMINI_API_KEY)
+        return genai.Client(api_key=api_key)
     except Exception as e:
         st.error(f"Gemini 初始化失敗: {e}")
         return None
 
-client = get_gemini_client()
+client = get_gemini_client(GEMINI_API_KEY)
 
 # ==========================================
 # 2. 功能函式 (搜尋、分析、繪圖)
 # ==========================================
 
 def search_google_text(query):
+    if not GOOGLE_SEARCH_API_KEY or not SEARCH_ENGINE_ID:
+        st.error("❌ 缺少 Google Search API Key 或 Engine ID")
+        return []
+        
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
         'key': GOOGLE_SEARCH_API_KEY,
@@ -61,7 +83,9 @@ def search_google_text(query):
         return []
 
 def analyze_with_gemini(course_name, search_results):
-    if not client: return None
+    if not client: 
+        st.error("❌ Gemini Client 未初始化 (請檢查 API Key)")
+        return None
     
     reviews_text = "\n---\n".join(search_results)
     prompt = f"""
@@ -94,34 +118,23 @@ def analyze_with_gemini(course_name, search_results):
         except: continue
     return None
 
+# --- 修正點 2: 加入 Linux 字體路徑 (讓雲端能顯示中文) ---
 def load_font(size):
-    """
-    自動尋找字體 (相容 Mac/Windows/Linux Streamlit Cloud)
-    """
-    # 1. Linux / Streamlit Cloud 專用 (思源黑體)
-    # 這是 packages.txt 安裝後的位置
+    """自動尋找字體 (相容 Mac/Windows/Linux Streamlit Cloud)"""
+    
+    # 1. Linux / Streamlit Cloud 專用 (一定要有這個，不然雲端會變框框)
     linux_font = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
     if os.path.exists(linux_font):
         return ImageFont.truetype(linux_font, size)
 
     # 2. Mac 專用
     mac_font = "/System/Library/Fonts/PingFang.ttc"
-    if os.path.exists(mac_font):
-        return ImageFont.truetype(mac_font, size)
+    if os.path.exists(mac_font): return ImageFont.truetype(mac_font, size)
     
-    # 3. Windows / 其他 Mac 字體
-    alternatives = [
-        "/System/Library/Fonts/STHeiti Light.ttc", # Mac
-        "msjh.ttc", # Windows 微軟正黑體
-        "simsun.ttc", # Windows 宋體
-        "arial.ttf"   # 英文字體 (最後備案)
-    ]
+    # 3. 其他備用
+    mac_font_2 = "/System/Library/Fonts/STHeiti Light.ttc"
+    if os.path.exists(mac_font_2): return ImageFont.truetype(mac_font_2, size)
     
-    for path in alternatives:
-        if os.path.exists(path):
-            return ImageFont.truetype(path, size)
-            
-    # 4. 真的都沒有，回傳預設 (可能會變成框框)
     return ImageFont.load_default()
 
 def get_fit_font(draw, text, max_width, max_height, initial_size):
@@ -171,7 +184,6 @@ def update_tier_list(course_name, tier_data):
     tier = tier_data.get('tier', 'C').upper()
     if tier not in ['S', 'A', 'B', 'C', 'D']: tier = 'C'
 
-    # 讀取圖片 (優先讀取已存在的結果圖)
     target_path = RESULT_IMAGE_PATH if os.path.exists(RESULT_IMAGE_PATH) else BASE_IMAGE_PATH
     if not os.path.exists(target_path):
         st.error(f"找不到底圖：{target_path}")
@@ -180,9 +192,7 @@ def update_tier_list(course_name, tier_data):
     try:
         base_img = Image.open(target_path).convert("RGBA")
     except:
-        # 如果結果圖壞了，重讀底圖
         base_img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
-        # 重置 session state 因為圖片重置了
         st.session_state.tier_counts = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
     W, H = base_img.size
@@ -196,7 +206,7 @@ def update_tier_list(course_name, tier_data):
     tier_map = {'S': 0, 'A': 1, 'B': 2, 'C': 3, 'D': 4}
     row_index = tier_map.get(tier, 3)
     
-    count = st.session_state.tier_counts[tier] # 從 Session State 讀取計數
+    count = st.session_state.tier_counts[tier] 
     pos_y = int((row_index * ROW_H) + (ROW_H - CARD_SIZE) / 2)
     pos_x = START_X + (count * (CARD_SIZE + PADDING))
     
@@ -205,13 +215,8 @@ def update_tier_list(course_name, tier_data):
         return False
 
     base_img.alpha_composite(card_img, (pos_x, pos_y))
-    
-    # 儲存
     base_img.save(RESULT_IMAGE_PATH)
-    
-    # 更新 Session State
     st.session_state.tier_counts[tier] += 1
-    
     return True
 
 # ==========================================
@@ -221,9 +226,9 @@ def update_tier_list(course_name, tier_data):
 st.title("🎓 北科大課程 AI 評價系統")
 st.markdown("輸入課程名稱，AI 幫你爬文、分析評價，並自動生成排位圖！")
 
-# 側邊欄：控制項
+# 側邊欄
 with st.sidebar:
-    st.header("⚙️ 設定與操作")
+    st.header("⚙️ 操作")
     if st.button("🗑️ 清空榜單重置", type="primary"):
         if os.path.exists(RESULT_IMAGE_PATH):
             os.remove(RESULT_IMAGE_PATH)
@@ -236,13 +241,14 @@ col1, col2 = st.columns([3, 1])
 with col1:
     query = st.text_input("請輸入課程名稱 (例如: 工數 莊政達)", placeholder="輸入完按 Enter 或搜尋按鈕...")
 with col2:
-    # 修正：移除 use_container_width，舊版不支援
     search_btn = st.button("🔍 開始搜尋")
 
 # 主邏輯
 if search_btn or query:
     if not query:
         st.warning("請輸入課程名稱！")
+    elif not GEMINI_API_KEY or not GOOGLE_SEARCH_API_KEY:
+        st.error("❌ 請先設定 API Keys (在雲端 Secrets 或側邊欄輸入)")
     else:
         with st.status("🤖 AI 正在工作中...", expanded=True) as status:
             st.write("🔍 正在 Google 搜尋相關評論...")
@@ -258,12 +264,10 @@ if search_btn or query:
                 if data:
                     status.update(label="✅ 分析完成！", state="complete")
                     
-                    # 顯示分析結果卡片
                     st.divider()
                     c1, c2 = st.columns([1, 2])
                     
                     with c1:
-                        # 顯示大大的等級
                         st.metric(label="評級", value=f"{data.get('tier')} 級", delta=f"分數: {data.get('score')}")
                         st.caption(f"稱號: {data.get('rank')}")
                         st.info(f"💡 {data.get('reason')}")
@@ -273,24 +277,20 @@ if search_btn or query:
                         st.subheader("📝 詳細評價")
                         st.write(data.get('details'))
                     
-                    # 更新圖片
                     if update_tier_list(query, data):
                         st.success(f"已將「{query}」加入 {data.get('tier')} 級榜單！")
                     
                 else:
                     status.update(label="❌ AI 分析失敗", state="error")
 
-# 顯示目前的榜單圖片
+# 顯示圖片
 st.divider()
 st.subheader("🏆 目前的課程排位榜單")
 
 if os.path.exists(RESULT_IMAGE_PATH):
-    # 使用時間戳記避免瀏覽器快取舊圖片
     import time
-    # 修正：改用 use_column_width，相容舊版
-    st.image(RESULT_IMAGE_PATH, caption="Tier List", use_column_width=True)
+    st.image(RESULT_IMAGE_PATH, caption=f"Tier List (更新於 {time.time()})", use_column_width=True)
 elif os.path.exists(BASE_IMAGE_PATH):
-    # 修正：改用 use_column_width，相容舊版
     st.image(BASE_IMAGE_PATH, caption="尚未有資料", use_column_width=True)
 else:
     st.error("找不到底圖，請確認 tier_list.png 存在於資料夾中。")
