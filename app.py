@@ -83,6 +83,7 @@ def search_google_text(query):
         return []
 
 def analyze_with_gemini(course_name, search_results):
+    
     if not client: 
         st.error("❌ Gemini Client 未初始化 (請檢查 API Key)")
         return None
@@ -111,6 +112,14 @@ def analyze_with_gemini(course_name, search_results):
     }}
     """
     models = ["gemini-2.5-flash", "gemini-pro"]
+    for m in models:
+        try:
+            res = client.models.generate_content(model=m, contents=prompt)
+            return json.loads(res.text.replace("```json", "").replace("```", "").strip())
+        except Exception as e:
+            # ★★★ 關鍵修改：把錯誤印在網頁上給你看 ★★★
+            st.warning(f"⚠️ 模型 {m} 失敗，原因：{e}")
+            
     for m in models:
         try:
             res = client.models.generate_content(model=m, contents=prompt)
