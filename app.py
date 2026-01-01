@@ -95,11 +95,33 @@ def analyze_with_gemini(course_name, search_results):
     return None
 
 def load_font(size):
-    """自動尋找 Mac 系統字體"""
+    """
+    自動尋找字體 (相容 Mac/Windows/Linux Streamlit Cloud)
+    """
+    # 1. Linux / Streamlit Cloud 專用 (思源黑體)
+    # 這是 packages.txt 安裝後的位置
+    linux_font = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    if os.path.exists(linux_font):
+        return ImageFont.truetype(linux_font, size)
+
+    # 2. Mac 專用
     mac_font = "/System/Library/Fonts/PingFang.ttc"
-    if os.path.exists(mac_font): return ImageFont.truetype(mac_font, size)
-    mac_font_2 = "/System/Library/Fonts/STHeiti Light.ttc"
-    if os.path.exists(mac_font_2): return ImageFont.truetype(mac_font_2, size)
+    if os.path.exists(mac_font):
+        return ImageFont.truetype(mac_font, size)
+    
+    # 3. Windows / 其他 Mac 字體
+    alternatives = [
+        "/System/Library/Fonts/STHeiti Light.ttc", # Mac
+        "msjh.ttc", # Windows 微軟正黑體
+        "simsun.ttc", # Windows 宋體
+        "arial.ttf"   # 英文字體 (最後備案)
+    ]
+    
+    for path in alternatives:
+        if os.path.exists(path):
+            return ImageFont.truetype(path, size)
+            
+    # 4. 真的都沒有，回傳預設 (可能會變成框框)
     return ImageFont.load_default()
 
 def get_fit_font(draw, text, max_width, max_height, initial_size):
