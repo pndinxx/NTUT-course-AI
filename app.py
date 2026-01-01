@@ -12,9 +12,9 @@ from io import BytesIO
 st.set_page_config(page_title="北科大課程評價 AI", page_icon="🎓", layout="wide")
 
 # ⚠️ 建議：將來部署時，Key 應該放在 st.secrets，不要直接寫在程式碼裡
-GEMINI_API_KEY = "GEMINI_API_KEY"
-GOOGLE_SEARCH_API_KEY = "GOOGLE_SEARCH_API_KEY"
-SEARCH_ENGINE_ID = "91a2a84d343244db0"
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+GOOGLE_SEARCH_API_KEY = st.secrets["GOOGLE_SEARCH_API_KEY"]
+SEARCH_ENGINE_ID = st.secrets["SEARCH_ENGINE_ID"]
 
 # 路徑設定
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
