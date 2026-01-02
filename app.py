@@ -145,7 +145,7 @@ def analyze_with_gemini(course_name, search_results):
       "details": "詳細說明"
     }}
     """
-    models = ["gemini-1.5-flash", "gemini-1.5-pro"]
+    models = ["gemini-2.5-flash", "gemini-pro"]
     
     for m in models:
         try:
