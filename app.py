@@ -14,7 +14,7 @@ st.set_page_config(page_title="北科大課程評價 AI", page_icon="🎓", layo
 # 路徑設定
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# --- 修正點 1: 安全讀取 API Key (防呆機制) ---
+# --- 安全讀取 API Key (防呆機制) ---
 def get_secret(key_name):
     try:
         return st.secrets[key_name]
@@ -146,15 +146,17 @@ def analyze_with_gemini(course_name, search_results):
     }}
     """
     models = ["gemini-1.5-flash", "gemini-1.5-pro"]
+    
     for m in models:
         try:
             res = client.models.generate_content(model=m, contents=prompt)
             return json.loads(res.text.replace("```json", "").replace("```", "").strip())
         except Exception as e:
-            # 失敗時嘗試下一個模型
+            # ★★★ 這裡就是你要的 Debug 顯示 ★★★
+            st.warning(f"⚠️ 模型 {m} 失敗，原因：{e}")
             continue
             
-    st.error("❌ 所有 AI 模型都分析失敗，請稍後再試。")
+    st.error("❌ 所有 AI 模型都分析失敗，請檢查上方的錯誤訊息 (通常是 API Key 過期或沒權限)。")
     return None
 
 # --- 字體載入 ---
