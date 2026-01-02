@@ -13,15 +13,8 @@ st.set_page_config(page_title="北科大課程評價 AI", page_icon="🎓", layo
 
 # 路徑設定
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-BASE_IMAGE_PATH = os.path.join(BASE_DIR, "tier_list.png") 
-RESULT_IMAGE_PATH = os.path.join(BASE_DIR, "final_tier_list.png")
-
-# 初始化 Session State (用來記憶狀態)
-if 'tier_counts' not in st.session_state:
-    st.session_state.tier_counts = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
 # --- 修正點 1: 安全讀取 API Key (防呆機制) ---
-# 這樣寫的好處：在雲端讀 st.secrets，在本機如果沒設 secrets 也不會直接當機，而是跳提示
 def get_secret(key_name):
     try:
         return st.secrets[key_name]
@@ -55,7 +48,49 @@ def get_gemini_client(api_key):
 client = get_gemini_client(GEMINI_API_KEY)
 
 # ==========================================
-# 2. 功能函式 (搜尋、分析、繪圖)
+# 2. 側邊欄設定 (版本切換邏輯)
+# ==========================================
+with st.sidebar:
+    st.header("🎨 介面設定 / Settings")
+    
+    # 讓使用者選擇版本
+    version_option = st.radio(
+        "選擇評級表版本 (Select Version)",
+        ("中文版 (Chinese)", "英文版 (English)"),
+        index=0
+    )
+
+    # 根據選擇設定檔案路徑和 Session Key
+    if version_option == "中文版 (Chinese)":
+        BASE_IMAGE_FILENAME = "tier_list.png"
+        RESULT_IMAGE_FILENAME = "final_tier_list.png"
+        SESSION_KEY = "tier_counts_zh" # 中文版專用的計數器
+    else:
+        BASE_IMAGE_FILENAME = "tier_list_en.png"
+        RESULT_IMAGE_FILENAME = "final_tier_list_en.png"
+        SESSION_KEY = "tier_counts_en" # 英文版專用的計數器
+
+    # 組合完整路徑
+    BASE_IMAGE_PATH = os.path.join(BASE_DIR, BASE_IMAGE_FILENAME)
+    RESULT_IMAGE_PATH = os.path.join(BASE_DIR, RESULT_IMAGE_FILENAME)
+
+    # 初始化對應版本的 Session State
+    if SESSION_KEY not in st.session_state:
+        st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
+
+    st.divider()
+    
+    # 清空按鈕 (只清空目前選擇的版本)
+    st.header("⚙️ 操作 / Actions")
+    if st.button("🗑️ 清空目前榜單 (Reset Current)", type="primary"):
+        if os.path.exists(RESULT_IMAGE_PATH):
+            os.remove(RESULT_IMAGE_PATH)
+        st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
+        st.success("已重置！ (Reset!)")
+        st.rerun()
+
+# ==========================================
+# 3. 功能函式 (搜尋、分析、繪圖)
 # ==========================================
 
 def search_google_text(query):
@@ -83,7 +118,6 @@ def search_google_text(query):
         return []
 
 def analyze_with_gemini(course_name, search_results):
-    
     if not client: 
         st.error("❌ Gemini Client 未初始化 (請檢查 API Key)")
         return None
@@ -111,27 +145,22 @@ def analyze_with_gemini(course_name, search_results):
       "details": "詳細說明"
     }}
     """
-    models = ["gemini-2.5-flash", "gemini-pro"]
+    models = ["gemini-1.5-flash", "gemini-1.5-pro"]
     for m in models:
         try:
             res = client.models.generate_content(model=m, contents=prompt)
             return json.loads(res.text.replace("```json", "").replace("```", "").strip())
         except Exception as e:
-            # ★★★ 關鍵修改：把錯誤印在網頁上給你看 ★★★
-            st.warning(f"⚠️ 模型 {m} 失敗，原因：{e}")
+            # 失敗時嘗試下一個模型
+            continue
             
-    for m in models:
-        try:
-            res = client.models.generate_content(model=m, contents=prompt)
-            return json.loads(res.text.replace("```json", "").replace("```", "").strip())
-        except: continue
+    st.error("❌ 所有 AI 模型都分析失敗，請稍後再試。")
     return None
 
-# --- 修正點 2: 加入 Linux 字體路徑 (讓雲端能顯示中文) ---
+# --- 字體載入 ---
 def load_font(size):
     """自動尋找字體 (相容 Mac/Windows/Linux Streamlit Cloud)"""
-    
-    # 1. Linux / Streamlit Cloud 專用 (一定要有這個，不然雲端會變框框)
+    # 1. Linux / Streamlit Cloud 專用
     linux_font = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
     if os.path.exists(linux_font):
         return ImageFont.truetype(linux_font, size)
@@ -193,16 +222,23 @@ def update_tier_list(course_name, tier_data):
     tier = tier_data.get('tier', 'C').upper()
     if tier not in ['S', 'A', 'B', 'C', 'D']: tier = 'C'
 
+    # 讀取圖片 (優先讀取已存在的結果圖，若無則讀取當前選擇的底圖)
     target_path = RESULT_IMAGE_PATH if os.path.exists(RESULT_IMAGE_PATH) else BASE_IMAGE_PATH
     if not os.path.exists(target_path):
-        st.error(f"找不到底圖：{target_path}")
+        st.error(f"找不到底圖檔案：{target_path} (請確認是否有上傳對應版本的圖片)")
         return False
 
     try:
         base_img = Image.open(target_path).convert("RGBA")
     except:
-        base_img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
-        st.session_state.tier_counts = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
+        # 如果壞了，重讀原始底圖
+        if os.path.exists(BASE_IMAGE_PATH):
+            base_img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
+            # 重置計數
+            st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
+        else:
+            st.error(f"無法重置，找不到原始底圖：{BASE_IMAGE_PATH}")
+            return False
 
     W, H = base_img.size
     ROW_H = H / 5  
@@ -215,7 +251,7 @@ def update_tier_list(course_name, tier_data):
     tier_map = {'S': 0, 'A': 1, 'B': 2, 'C': 3, 'D': 4}
     row_index = tier_map.get(tier, 3)
     
-    count = st.session_state.tier_counts[tier] 
+    count = st.session_state[SESSION_KEY][tier] # 使用對應版本的計數器
     pos_y = int((row_index * ROW_H) + (ROW_H - CARD_SIZE) / 2)
     pos_x = START_X + (count * (CARD_SIZE + PADDING))
     
@@ -225,25 +261,15 @@ def update_tier_list(course_name, tier_data):
 
     base_img.alpha_composite(card_img, (pos_x, pos_y))
     base_img.save(RESULT_IMAGE_PATH)
-    st.session_state.tier_counts[tier] += 1
+    st.session_state[SESSION_KEY][tier] += 1
     return True
 
 # ==========================================
-# 3. 網頁主介面
+# 4. 網頁主介面
 # ==========================================
 
 st.title("🎓 北科大課程 AI 評價系統")
 st.markdown("輸入課程名稱，AI 幫你爬文、分析評價，並自動生成排位圖！")
-
-# 側邊欄
-with st.sidebar:
-    st.header("⚙️ 操作")
-    if st.button("🗑️ 清空榜單重置", type="primary"):
-        if os.path.exists(RESULT_IMAGE_PATH):
-            os.remove(RESULT_IMAGE_PATH)
-        st.session_state.tier_counts = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
-        st.success("榜單已重置！")
-        st.rerun()
 
 # 輸入區
 col1, col2 = st.columns([3, 1])
@@ -294,12 +320,12 @@ if search_btn or query:
 
 # 顯示圖片
 st.divider()
-st.subheader("🏆 目前的課程排位榜單")
+st.subheader(f"🏆 課程排位榜單 ({version_option})")
 
 if os.path.exists(RESULT_IMAGE_PATH):
     import time
-    st.image(RESULT_IMAGE_PATH, caption=f"Tier List (更新於 {time.time()})", use_column_width=True)
+    st.image(RESULT_IMAGE_PATH, caption=f"Tier List ({version_option})", use_column_width=True)
 elif os.path.exists(BASE_IMAGE_PATH):
-    st.image(BASE_IMAGE_PATH, caption="尚未有資料", use_column_width=True)
+    st.image(BASE_IMAGE_PATH, caption="尚未有資料 (Empty)", use_column_width=True)
 else:
-    st.error("找不到底圖，請確認 tier_list.png 存在於資料夾中。")
+    st.error(f"找不到底圖 ({BASE_IMAGE_FILENAME})，請確認檔案已上傳至 GitHub/資料夾。")
