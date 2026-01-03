@@ -95,7 +95,7 @@ with st.sidebar:
 
 def search_google_text(query):
     if not GOOGLE_SEARCH_API_KEY or not SEARCH_ENGINE_ID:
-        st.error("❌ 缺少 Google Search API Key 或 Engine ID")
+        st.error("缺少 Google Search API Key 或 Engine ID")
         return []
         
     url = "https://www.googleapis.com/customsearch/v1"
@@ -299,7 +299,7 @@ if search_btn or query:
                 data = analyze_with_gemini(query, results)
                 
                 if data:
-                    status.update(label="✅ 分析完成！", state="complete")
+                    status.update(label="分析完成！", state="complete")
                     
                     st.divider()
                     c1, c2 = st.columns([1, 2])
@@ -311,7 +311,7 @@ if search_btn or query:
                         st.write("🏷️ " + "、".join(data.get('tags', [])))
                     
                     with c2:
-                        st.subheader("📝 詳細評價")
+                        st.subheader("詳細評價")
                         st.write(data.get('details'))
                     
                     if update_tier_list(query, data):
@@ -322,7 +322,7 @@ if search_btn or query:
 
 # 顯示圖片
 st.divider()
-st.subheader(f"🏆 課程排位榜單 ({version_option})")
+st.subheader(f"課程排位榜單 ({version_option})")
 
 if os.path.exists(RESULT_IMAGE_PATH):
     import time
