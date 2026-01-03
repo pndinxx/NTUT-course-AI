@@ -274,7 +274,7 @@ st.title("北科大課程 AI 評價系統")
 st.markdown("輸入課程名稱，AI 幫你爬文、分析評價，並自動生成Tier List！")
 
 # 改成 [1.5, 0.5, 2] -> 搜尋欄跟按鈕只佔左半邊，右邊留一大塊白
-col1, col2, col3 = st.columns([3, 0.2, 1.5], vertical_alignment="bottom")
+col1, col2, col3 = st.columns([3, 0.3, 1.5], vertical_alignment="bottom")
 
 with col1:
     query = st.text_input("請輸入課程或老師名稱", placeholder="輸入完按 Enter 或搜尋")
