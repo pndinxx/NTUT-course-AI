@@ -273,12 +273,14 @@ def update_tier_list(course_name, tier_data):
 st.title("北科大課程 AI 評價系統")
 st.markdown("輸入課程名稱，AI 幫你爬文、分析評價，並自動生成Tier List！")
 
-# 輸入區
-col1, col2 = st.columns([3, 1], vertical_alignment="bottom")
+# 改成 [1.5, 0.5, 2] -> 搜尋欄跟按鈕只佔左半邊，右邊留一大塊白
+col1, col2, col3 = st.columns([1.5, 0.5, 2], vertical_alignment="bottom")
+
 with col1:
-    query = st.text_input("請輸入課程或老師名稱，也可以輸入: 微積分 羅仁傑", placeholder="輸入完按 Enter 或搜尋")
+    query = st.text_input("請輸入課程或老師名稱", placeholder="輸入完按 Enter 或搜尋")
 with col2:
-    search_btn = st.button("搜尋")
+    search_btn = st.button("搜尋", use_container_width=True)
+# col3 空著當右邊的留白
 
 # 主邏輯
 if search_btn or query:
