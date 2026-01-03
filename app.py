@@ -271,10 +271,10 @@ def update_tier_list(course_name, tier_data):
 # ==========================================
 
 st.title("北科大課程 AI 評價系統")
-st.markdown("輸入課程名稱，AI 幫你爬文、分析評價，並自動生成排位圖！")
+st.markdown("輸入課程名稱，AI 幫你爬文、分析評價，並自動生成Tier List！")
 
 # 輸入區
-col1, col2 = st.columns([3, 1])
+col1, col2 = st.columns([3, 1], vertical_alignment="bottom")
 with col1:
     query = st.text_input("請輸入課程或老師名稱，也可以輸入: 微積分 羅仁傑", placeholder="輸入完按 Enter 或搜尋")
 with col2:
