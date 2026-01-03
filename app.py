@@ -9,7 +9,7 @@ from io import BytesIO
 # ==========================================
 # 1. 設定頁面與 API Keys
 # ==========================================
-st.set_page_config(page_title="北科大課程評價 AI", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="北科大AI課程評價", layout="wide")
 
 # 路徑設定
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -30,7 +30,7 @@ SEARCH_ENGINE_ID = get_secret("SEARCH_ENGINE_ID")
 # 如果讀不到 Key，在側邊欄顯示警告輸入框 (方便本機測試)
 if not GEMINI_API_KEY:
     with st.sidebar:
-        st.warning("⚠️ 偵測到本機執行且未設定 Secrets")
+        st.warning("偵測到本機執行且未設定 Secrets")
         GEMINI_API_KEY = st.text_input("請輸入 Gemini API Key", type="password")
         GOOGLE_SEARCH_API_KEY = st.text_input("請輸入 Google Search Key", type="password")
         SEARCH_ENGINE_ID = st.text_input("請輸入 Search Engine ID")
@@ -51,17 +51,17 @@ client = get_gemini_client(GEMINI_API_KEY)
 # 2. 側邊欄設定 (版本切換邏輯)
 # ==========================================
 with st.sidebar:
-    st.header("🎨 介面設定 / Settings")
+    st.header("介面設定")
     
     # 讓使用者選擇版本
     version_option = st.radio(
-        "選擇評級表版本 (Select Version)",
-        ("中文版 (Chinese)", "英文版 (English)"),
+        "選擇Tier List版本",
+        ("中文", "英文"),
         index=0
     )
 
     # 根據選擇設定檔案路徑和 Session Key
-    if version_option == "中文版 (Chinese)":
+    if version_option == "中文":
         BASE_IMAGE_FILENAME = "tier_list.png"
         RESULT_IMAGE_FILENAME = "final_tier_list.png"
         SESSION_KEY = "tier_counts_zh" # 中文版專用的計數器
@@ -81,12 +81,12 @@ with st.sidebar:
     st.divider()
     
     # 清空按鈕 (只清空目前選擇的版本)
-    st.header("⚙️ 操作 / Actions")
-    if st.button("🗑️ 清空目前榜單 (Reset Current)", type="primary"):
+    st.header("操作")
+    if st.button("清空目前榜單", type="primary"):
         if os.path.exists(RESULT_IMAGE_PATH):
             os.remove(RESULT_IMAGE_PATH)
         st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
-        st.success("已重置！ (Reset!)")
+        st.success("已重置！")
         st.rerun()
 
 # ==========================================
@@ -119,7 +119,7 @@ def search_google_text(query):
 
 def analyze_with_gemini(course_name, search_results):
     if not client: 
-        st.error("❌ Gemini Client 未初始化 (請檢查 API Key)")
+        st.error("Gemini Client 未初始化 (請檢查 API Key)")
         return None
     
     reviews_text = "\n---\n".join(search_results)
@@ -153,10 +153,10 @@ def analyze_with_gemini(course_name, search_results):
             return json.loads(res.text.replace("```json", "").replace("```", "").strip())
         except Exception as e:
             # ★★★ 這裡就是你要的 Debug 顯示 ★★★
-            st.warning(f"⚠️ 模型 {m} 失敗，原因：{e}")
+            st.warning(f"模型 {m} 失敗，原因：{e}")
             continue
             
-    st.error("❌ 所有 AI 模型都分析失敗，請檢查上方的錯誤訊息 (通常是 API Key 過期或沒權限)。")
+    st.error("所有 AI 模型都分析失敗，請檢查上方的錯誤訊息。")
     return None
 
 # --- 字體載入 ---
@@ -258,7 +258,7 @@ def update_tier_list(course_name, tier_data):
     pos_x = START_X + (count * (CARD_SIZE + PADDING))
     
     if pos_x + CARD_SIZE > W:
-        st.warning(f"⚠️ {tier} 級已滿，無法再貼圖片了！")
+        st.warning(f"{tier} 級已滿，無法再貼圖片了！")
         return False
 
     base_img.alpha_composite(card_img, (pos_x, pos_y))
@@ -285,14 +285,14 @@ if search_btn or query:
     if not query:
         st.warning("請輸入課程名稱！")
     elif not GEMINI_API_KEY or not GOOGLE_SEARCH_API_KEY:
-        st.error("❌ 請先設定 API Keys (在雲端 Secrets 或側邊欄輸入)")
+        st.error("請先設定 API Keys")
     else:
         with st.status("🤖 AI 正在工作中...", expanded=True) as status:
             st.write("🔍 正在 Google 搜尋相關評論...")
             results = search_google_text(query)
             
             if not results:
-                status.update(label="❌ 搜尋失敗", state="error")
+                status.update(label="搜尋失敗", state="error")
                 st.error("找不到相關評論，請換個關鍵字試試。")
             else:
                 st.write("📖 正在閱讀評論並分析...")
@@ -318,7 +318,7 @@ if search_btn or query:
                         st.success(f"已將「{query}」加入 {data.get('tier')} 級榜單！")
                     
                 else:
-                    status.update(label="❌ AI 分析失敗", state="error")
+                    status.update(label="AI 分析失敗", state="error")
 
 # 顯示圖片
 st.divider()
