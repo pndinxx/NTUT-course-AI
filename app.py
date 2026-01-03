@@ -270,15 +270,15 @@ def update_tier_list(course_name, tier_data):
 # 4. 網頁主介面
 # ==========================================
 
-st.title("🎓 北科大課程 AI 評價系統")
+st.title("北科大課程 AI 評價系統")
 st.markdown("輸入課程名稱，AI 幫你爬文、分析評價，並自動生成排位圖！")
 
 # 輸入區
 col1, col2 = st.columns([3, 1])
 with col1:
-    query = st.text_input("請輸入課程名稱 (例如: 工數 莊政達)", placeholder="輸入完按 Enter 或搜尋按鈕...")
+    query = st.text_input("請輸入課程或老師名稱，也可以輸入: 微積分 羅仁傑", placeholder="輸入完按 Enter 或搜尋")
 with col2:
-    search_btn = st.button("🔍 開始搜尋")
+    search_btn = st.button("搜尋")
 
 # 主邏輯
 if search_btn or query:
@@ -287,15 +287,15 @@ if search_btn or query:
     elif not GEMINI_API_KEY or not GOOGLE_SEARCH_API_KEY:
         st.error("請先設定 API Keys")
     else:
-        with st.status("🤖 AI 正在工作中...", expanded=True) as status:
-            st.write("🔍 正在 Google 搜尋相關評論...")
+        with st.status("AI 正在分析中...", expanded=True) as status:
+            st.write("正在 Google 搜尋相關評論...")
             results = search_google_text(query)
             
             if not results:
                 status.update(label="搜尋失敗", state="error")
                 st.error("找不到相關評論，請換個關鍵字試試。")
             else:
-                st.write("📖 正在閱讀評論並分析...")
+                st.write("正在閱讀評論並分析...")
                 data = analyze_with_gemini(query, results)
                 
                 if data:
