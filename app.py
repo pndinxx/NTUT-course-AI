@@ -140,7 +140,7 @@ def agent_data_curator(course_name, raw_data):
     請直接輸出整理後的摘要：
     """
     try:
-        res = client.models.generate_content(model="gemini-3-flash", contents=prompt)
+        res = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
         return res.text
     except Exception as e:
         st.warning(f"Agent 1 失敗: {e}")
@@ -173,7 +173,7 @@ def agent_senior_analyst(course_name, curated_data):
     }}
     """
     try:
-        res = client.models.generate_content(model="gemini-3-flash", contents=prompt)
+        res = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
         return res.text
     except Exception as e:
         st.warning(f"Agent 2 失敗: {e}")
@@ -197,7 +197,7 @@ def agent_json_guardrail(raw_response):
     錯誤文字：{raw_response}
     """
     try:
-        res = client.models.generate_content(model="gemini-3-flash", contents=prompt)
+        res = client.models.generate_content(model="gemini-2.0-flash", contents=prompt)
         fixed_text = res.text.replace("```json", "").replace("```", "").strip()
         return json.loads(fixed_text)
     except Exception as e:
