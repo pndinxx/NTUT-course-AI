@@ -137,7 +137,7 @@ def agent_data_curator(course_name, raw_data):
     """
     try:
         # ★★★ 指定使用 2.5-flash ★★★
-        res = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        res = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
         return res.text
     except Exception as e:
         st.warning(f"Agent 1 失敗: {e}")
@@ -171,7 +171,7 @@ def agent_senior_analyst(course_name, curated_data):
     """
     # ★★★ 指定使用 2.5-flash ★★★
     try:
-        res = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        res = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
         return res.text
     except Exception as e:
         st.warning(f"Agent 2 失敗: {e}")
@@ -196,7 +196,7 @@ def agent_json_guardrail(raw_response):
     """
     try:
         # ★★★ 指定使用 2.5-flash ★★★
-        res = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        res = client.models.generate_content(model="gemini-1.5-flash", contents=prompt)
         fixed_text = res.text.replace("```json", "").replace("```", "").strip()
         return json.loads(fixed_text)
     except Exception as e:
