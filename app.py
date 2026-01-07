@@ -27,7 +27,7 @@ GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 GOOGLE_SEARCH_API_KEY = get_secret("GOOGLE_SEARCH_API_KEY")
 SEARCH_ENGINE_ID = get_secret("SEARCH_ENGINE_ID")
 
-# 如果讀不到 Key，在側邊欄顯示警告輸入框 (方便本機測試)
+# 如果讀不到 Key，在側邊欄顯示警告輸入框
 if not GEMINI_API_KEY:
     with st.sidebar:
         st.warning("偵測到本機執行且未設定 Secrets")
