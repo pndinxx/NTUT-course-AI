@@ -34,49 +34,31 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 2. 核心：指定模型呼叫 (2.5 -> 2.0 策略)
+# 2. 側邊欄設定 (提前定義，為了讓函式能存取佔位符)
 # ==========================================
-def call_gemini_advanced(contents):
-    """
-    優先使用 gemini-2.5-flash。
-    如果遇到額度限制 (429)，自動降級到 gemini-2.0-flash。
-    """
-    primary_model = "gemini-2.5-flash"
-    backup_model = "gemini-2.0-flash" 
-
-    try:
-        model = genai.GenerativeModel(primary_model)
-        response = model.generate_content(contents)
-        return response.text
-    except Exception as e:
-        error_msg = str(e)
-        if "429" in error_msg or "404" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            time.sleep(1) 
-            try:
-                fallback = genai.GenerativeModel(backup_model)
-                response = fallback.generate_content(contents)
-                return response.text
-            except Exception as e2:
-                st.error(f"❌ 所有模型皆失敗: {e2}")
-                return None
-        else:
-            st.error(f"❌ 模型呼叫錯誤: {e}")
-            return None
-
-# ==========================================
-# 3. 側邊欄與狀態設定
-# ==========================================
-if 'current_analysis_data' not in st.session_state:
-    st.session_state.current_analysis_data = None
-if 'current_recommend_data' not in st.session_state:
-    st.session_state.current_recommend_data = None
+# 初始化 Session State 來記住最後一次成功的模型
+if 'last_active_model' not in st.session_state:
+    st.session_state.last_active_model = None
 
 with st.sidebar:
+    st.header("🧠 AI 核心狀態")
+    
+    # ★★★ 關鍵：建立一個動態佔位符 ★★★
+    # 這個變數 status_placeholder 是全域的，下面的函式可以直接修改它
+    status_placeholder = st.empty()
+
+    # 如果之前有跑過，先顯示最後一次的狀態，不然顯示待機
+    if st.session_state.last_active_model:
+        if "2.5" in st.session_state.last_active_model:
+            status_placeholder.success(f"🚀 當前核心：\n{st.session_state.last_active_model}")
+        else:
+            status_placeholder.warning(f"🛡️ 當前核心 (備援)：\n{st.session_state.last_active_model}")
+    else:
+        status_placeholder.info("💤 系統待機中...")
+
+    st.divider()
     st.header("介面設定")
     version_option = st.radio("選擇 Tier List 版本", ("中文", "英文"), index=0)
-    
-    # ★★★ 修改處：顯示目前模型策略 ★★★
-    st.success("🚀 目前模型策略：\n優先：Gemini 2.5 Flash\n備援：Gemini 2.0 Flash")
 
     if version_option == "中文":
         BASE_IMAGE_FILENAME = "tier_list.png"
@@ -93,18 +75,73 @@ with st.sidebar:
     if SESSION_KEY not in st.session_state:
         st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
-    st.divider()
     if st.button("清空目前榜單", type="primary"):
         if os.path.exists(RESULT_IMAGE_PATH):
             os.remove(RESULT_IMAGE_PATH)
         st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
-        st.session_state.current_analysis_data = None
-        st.session_state.current_recommend_data = None
+        st.session_state['current_analysis_data'] = None
+        st.session_state['current_recommend_data'] = None
         st.success("已重置！")
         st.rerun()
 
 # ==========================================
-# 4. 功能函式
+# 3. 核心：指定模型呼叫 (含即時狀態更新)
+# ==========================================
+def call_gemini_advanced(contents):
+    """
+    優先使用 2.5-flash，失敗轉 2.0-flash。
+    會即時更新側邊欄的 status_placeholder。
+    """
+    primary_model = "gemini-2.5-flash"
+    backup_model = "gemini-2.0-flash" 
+
+    # --- 1. 嘗試 Primary (2.5) ---
+    try:
+        # 即時顯示：正在嘗試
+        status_placeholder.info(f"🔄 正在連線：{primary_model}...")
+        
+        model = genai.GenerativeModel(primary_model)
+        response = model.generate_content(contents)
+        
+        # 成功！更新狀態與 Session
+        success_msg = f"gemini-2.5-flash"
+        st.session_state.last_active_model = success_msg
+        status_placeholder.success(f"🚀 當前核心：\n{success_msg}")
+        
+        return response.text
+
+    except Exception as e:
+        error_msg = str(e)
+        
+        # 如果是 429/404，進入備援流程
+        if "429" in error_msg or "404" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            # 即時顯示：切換中
+            status_placeholder.warning(f"⚠️ 2.5 忙碌中，切換至備援核心...")
+            time.sleep(1) 
+            
+            # --- 2. 嘗試 Backup (2.0) ---
+            try:
+                status_placeholder.info(f"🔄 正在連線：{backup_model}...")
+                fallback = genai.GenerativeModel(backup_model)
+                response = fallback.generate_content(contents)
+                
+                # 備援成功
+                success_msg = f"gemini-2.0-flash"
+                st.session_state.last_active_model = success_msg
+                status_placeholder.warning(f"🛡️ 當前核心 (備援)：\n{success_msg}")
+                
+                return response.text
+            except Exception as e2:
+                status_placeholder.error("❌ 所有核心連線失敗")
+                st.error(f"❌ 所有模型 (2.5 & 2.0) 皆失敗: {e2}")
+                return None
+        else:
+            status_placeholder.error(f"❌ 呼叫錯誤: {primary_model}")
+            st.error(f"❌ 模型呼叫錯誤 ({primary_model}): {e}")
+            return None
+
+# ==========================================
+# 4. 功能函式 (搜尋、Agent、繪圖)
 # ==========================================
 
 def search_google_text(query, mode="analysis"):
@@ -170,7 +207,7 @@ def agent_senior_analyst(course_name, curated_data):
     return call_gemini_advanced(prompt)
 
 def agent_course_recommender(category, raw_data):
-    """Agent 4: 獵頭顧問"""
+    """Agent 4: 獵頭顧問 (推薦用)"""
     raw_text = "\n---\n".join(raw_data)
     prompt = f"""
     你是北科大選課推薦顧問。使用者想找「{category}」類別的好課。
@@ -298,6 +335,12 @@ def update_tier_list(course_name, tier_data):
 
 st.title("🎓 北科大課程 AI 選課顧問")
 st.markdown("輸入課程名稱，AI 幫你 **分析評價 (0~100分)** 或 **推薦好老師**！")
+
+# UI 設定
+if 'current_analysis_data' not in st.session_state:
+    st.session_state.current_analysis_data = None
+if 'current_recommend_data' not in st.session_state:
+    st.session_state.current_recommend_data = None
 
 c_input, c_btn1, c_btn2, c_space = st.columns([3, 1, 1, 1], vertical_alignment="bottom")
 
