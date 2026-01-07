@@ -75,7 +75,8 @@ with st.sidebar:
     st.header("介面設定")
     version_option = st.radio("選擇 Tier List 版本", ("中文", "英文"), index=0)
     
-    st.success("🚀 分數機制：0~100 數值量化")
+    # ★★★ 修改處：顯示目前模型策略 ★★★
+    st.success("🚀 目前模型策略：\n優先：Gemini 2.5 Flash\n備援：Gemini 2.0 Flash")
 
     if version_option == "中文":
         BASE_IMAGE_FILENAME = "tier_list.png"
@@ -144,7 +145,6 @@ def agent_data_curator(course_name, raw_data):
 
 def agent_senior_analyst(course_name, curated_data):
     """Agent 2: 首席分析師 (Tier List 用)"""
-    # ★★★ 這裡加入了明確的 0-100 分數邏輯 ★★★
     prompt = f"""
     你現在是北科大選課權威。請分析課程「{course_name}」。
     已過濾評論：{curated_data}
