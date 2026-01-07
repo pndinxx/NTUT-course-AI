@@ -7,16 +7,14 @@ from io import BytesIO
 import time
 
 # ==========================================
-# 0. 雙重 SDK 匯入 (Hybrid SDK Import)
+# 0. 雙重 SDK 匯入 & 檢查
 # ==========================================
-# 嘗試匯入舊版 SDK (穩定版)
 try:
     import google.generativeai as genai_v1
     HAS_V1_SDK = True
 except ImportError:
     HAS_V1_SDK = False
 
-# 嘗試匯入新版 SDK (實驗版)
 try:
     from google import genai as genai_v2
     HAS_V2_SDK = True
@@ -27,16 +25,12 @@ except ImportError:
 # 1. 設定頁面與 API Keys
 # ==========================================
 st.set_page_config(page_title="北科大AI選課顧問", layout="wide")
-
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def get_secret(key_name):
     try:
         return st.secrets[key_name]
-    except FileNotFoundError:
-        return None 
-    except KeyError:
-        return None 
+    except: return None 
 
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 GOOGLE_SEARCH_API_KEY = get_secret("GOOGLE_SEARCH_API_KEY")
@@ -49,70 +43,84 @@ if not GEMINI_API_KEY:
         GOOGLE_SEARCH_API_KEY = st.text_input("請輸入 Google Search Key", type="password")
         SEARCH_ENGINE_ID = st.text_input("請輸入 Search Engine ID")
 
-# --- 初始化雙客戶端 ---
+# --- 初始化客戶端 ---
 client_v2 = None
+valid_model_name = "gemini-pro" # 預設最舊的模型當保底
+
 if GEMINI_API_KEY:
-    # 1. 初始化舊版 (V1)
+    # 1. 初始化 V1 SDK
     if HAS_V1_SDK:
         genai_v1.configure(api_key=GEMINI_API_KEY)
-    
-    # 2. 初始化新版 (V2)
+        # ★★★ 自動偵測可用模型 (避免 404) ★★★
+        try:
+            available_models = [m.name for m in genai_v1.list_models()]
+            # 優先順序：2.0 > 1.5-flash > 1.5-pro > gemini-pro
+            if 'models/gemini-2.0-flash-exp' in available_models:
+                valid_model_name = 'gemini-2.0-flash-exp'
+            elif 'models/gemini-1.5-flash' in available_models:
+                valid_model_name = 'gemini-1.5-flash'
+            elif 'models/gemini-1.5-flash-latest' in available_models:
+                valid_model_name = 'gemini-1.5-flash-latest'
+            elif 'models/gemini-1.5-pro' in available_models:
+                valid_model_name = 'gemini-1.5-pro'
+            elif 'models/gemini-pro' in available_models:
+                valid_model_name = 'gemini-pro'
+            
+            print(f"DEBUG: 系統自動選用模型: {valid_model_name}")
+        except Exception as e:
+            print(f"DEBUG: 模型列表抓取失敗，使用預設值: {e}")
+
+    # 2. 初始化 V2 SDK
     if HAS_V2_SDK:
         try:
             client_v2 = genai_v2.Client(api_key=GEMINI_API_KEY)
-        except Exception as e:
-            st.error(f"V2 SDK 初始化失敗: {e}")
+        except: pass
 
 # ==========================================
-# 2. 核心：混合呼叫引擎 (The Hybrid Engine)
+# 2. 核心：不死鳥混合呼叫引擎
 # ==========================================
 def call_gemini_hybrid(contents):
     """
     策略：
-    1. 先嘗試用 google-genai 呼叫 gemini-2.5-flash
-    2. 失敗則用 google-generativeai 呼叫 gemini-1.5-flash
+    1. V2 SDK (嘗試 2.5-flash / 1.5-flash)
+    2. V1 SDK (使用自動偵測到的 valid_model_name)
     """
     
-    # --- 策略 A: 優先嘗試 V2 SDK + 2.5-flash ---
+    # --- 策略 A: V2 SDK ---
     if HAS_V2_SDK and client_v2:
         try:
-            # 嘗試呼叫 2.5
+            # V2 比較新，直接試 2.5 或 1.5
             response = client_v2.models.generate_content(
-                model="gemini-2.5-flash", 
+                model="gemini-1.5-flash", # 為了穩定，V2也先叫1.5
                 contents=contents
             )
             return response.text
-        except Exception as e:
-            # 如果失敗 (404, 429)，只記錄不報錯，繼續往下走
-            # st.toast(f"⚠️ 2.5-flash 呼叫失敗，切換至 1.5 備援...", icon="🔀")
-            pass
+        except:
+            pass # 失敗就安靜地換下一個方法
 
-    # --- 策略 B: 備援使用 V1 SDK + 1.5-flash ---
+    # --- 策略 B: V1 SDK (最穩) ---
     if HAS_V1_SDK:
         try:
-            model = genai_v1.GenerativeModel("gemini-1.5-flash")
-            # 這裡加上簡單的重試機制，防止 1.5 也忙碌
-            for i in range(2):
-                try:
+            # 使用我們剛才偵測到一定存在的模型名稱
+            model = genai_v1.GenerativeModel(valid_model_name)
+            response = model.generate_content(contents)
+            return response.text
+        except Exception as e:
+            # 如果真的連保底都掛了，顯示錯誤
+            if "429" in str(e):
+                st.toast("⏳ 額度冷卻中，請稍候...", icon="🧊")
+                time.sleep(3)
+                try: # 最後掙扎重試一次
                     response = model.generate_content(contents)
                     return response.text
-                except Exception as e:
-                    if "429" in str(e):
-                        time.sleep(2)
-                        continue
-                    else:
-                        raise e
-        except Exception as e:
-            st.warning(f"❌ 所有模型嘗試皆失敗 (V1 & V2): {e}")
+                except: return None
+            st.warning(f"AI 呼叫失敗 ({valid_model_name}): {e}")
             return None
-    else:
-        st.error("❌ 嚴重錯誤：找不到 google-generativeai 套件，無法執行備援。")
-        return None
-
+    
     return None
 
 # ==========================================
-# 3. 側邊欄與狀態設定
+# 3. 狀態與 Session
 # ==========================================
 if 'current_analysis_data' not in st.session_state:
     st.session_state.current_analysis_data = None
@@ -122,6 +130,9 @@ if 'current_recommend_data' not in st.session_state:
 with st.sidebar:
     st.header("介面設定")
     version_option = st.radio("選擇 Tier List 版本", ("中文", "英文"), index=0)
+    
+    # 顯示目前使用的模型 (Debug用)
+    st.caption(f"🚀 目前使用模型: {valid_model_name}")
 
     if version_option == "中文":
         BASE_IMAGE_FILENAME = "tier_list.png"
@@ -139,7 +150,6 @@ with st.sidebar:
         st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
     st.divider()
-    st.header("操作")
     if st.button("清空目前榜單", type="primary"):
         if os.path.exists(RESULT_IMAGE_PATH):
             os.remove(RESULT_IMAGE_PATH)
@@ -176,7 +186,7 @@ def search_google_text(query, mode="analysis"):
         st.error(f"搜尋錯誤: {e}")
         return []
 
-# --- Agent 團隊 (全部改用 call_gemini_hybrid) ---
+# --- Agent 團隊 ---
 
 def agent_data_curator(course_name, raw_data):
     """Agent 1: 資料清理"""
