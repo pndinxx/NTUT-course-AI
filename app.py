@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import requests
 import json
-import google.generativeai as genai  # ★★★ 改用這個最穩定的 SDK
+import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 import time
@@ -15,12 +15,8 @@ st.set_page_config(page_title="北科大AI課程評價", layout="wide")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def get_secret(key_name):
-    try:
-        return st.secrets[key_name]
-    except FileNotFoundError:
-        return None 
-    except KeyError:
-        return None 
+    try: return st.secrets[key_name]
+    except: return None 
 
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
 GOOGLE_SEARCH_API_KEY = get_secret("GOOGLE_SEARCH_API_KEY")
@@ -33,16 +29,60 @@ if not GEMINI_API_KEY:
         GOOGLE_SEARCH_API_KEY = st.text_input("請輸入 Google Search Key", type="password")
         SEARCH_ENGINE_ID = st.text_input("請輸入 Search Engine ID")
 
-# ★★★ 初始化設定 (標準版寫法) ★★★
+# 初始化 Gemini
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 2. 側邊欄設定
+# 2. 核心：指定模型呼叫 (只用你清單有的)
 # ==========================================
+def call_gemini_advanced(contents):
+    """
+    優先使用 gemini-2.5-flash。
+    如果遇到額度限制 (429)，自動降級到 gemini-2.0-flash。
+    絕不使用 1.5。
+    """
+    # 你的清單中最強的兩個 Flash 模型
+    primary_model = "gemini-2.5-flash"
+    backup_model = "gemini-2.0-flash" 
+
+    # 1. 嘗試 Primary (2.5)
+    try:
+        model = genai.GenerativeModel(primary_model)
+        response = model.generate_content(contents)
+        return response.text
+    except Exception as e:
+        error_msg = str(e)
+        
+        # 如果是 429 (額度滿) 或 404 (暫時連不上)
+        if "429" in error_msg or "404" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+            # st.toast(f"⚠️ {primary_model} 額度滿了，切換至 {backup_model}...", icon="🔀")
+            time.sleep(2) # 稍微冷卻
+            
+            # 2. 嘗試 Backup (2.0)
+            try:
+                fallback = genai.GenerativeModel(backup_model)
+                response = fallback.generate_content(contents)
+                return response.text
+            except Exception as e2:
+                st.error(f"❌ 所有模型 (2.5 & 2.0) 皆失敗: {e2}")
+                return None
+        else:
+            # 其他錯誤直接報錯
+            st.error(f"❌ 模型呼叫錯誤 ({primary_model}): {e}")
+            return None
+
+# ==========================================
+# 3. 側邊欄與狀態設定
+# ==========================================
+if 'current_analysis_data' not in st.session_state:
+    st.session_state.current_analysis_data = None
+
 with st.sidebar:
     st.header("介面設定")
-    version_option = st.radio("選擇Tier List版本", ("中文", "英文"), index=0)
+    version_option = st.radio("選擇 Tier List 版本", ("中文", "英文"), index=0)
+    
+    st.success("🚀 已鎖定模型: Gemini 2.5 Flash")
 
     if version_option == "中文":
         BASE_IMAGE_FILENAME = "tier_list.png"
@@ -60,23 +100,23 @@ with st.sidebar:
         st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
     st.divider()
-    st.header("操作")
     if st.button("清空目前榜單", type="primary"):
         if os.path.exists(RESULT_IMAGE_PATH):
             os.remove(RESULT_IMAGE_PATH)
         st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
+        st.session_state.current_analysis_data = None
         st.success("已重置！")
         st.rerun()
 
 # ==========================================
-# 3. 功能函式 (搜尋、Agent、繪圖)
+# 4. 功能函式
 # ==========================================
 
 def search_google_text(query):
     if not GOOGLE_SEARCH_API_KEY or not SEARCH_ENGINE_ID:
-        st.error("缺少 Google Search API Key 或 Engine ID")
+        st.error("缺少 Google Search API Key")
         return []
-        
+    
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
         'key': GOOGLE_SEARCH_API_KEY,
@@ -86,114 +126,64 @@ def search_google_text(query):
     }
     try:
         response = requests.get(url, params=params, timeout=10)
-        if response.status_code != 200:
-            st.error(f"Google API 錯誤: {response.status_code}")
-            return []
+        if response.status_code != 200: return []
         data = response.json()
         if 'items' not in data: return []
-        return [f"標題:{i.get('title')} 内容:{i.get('snippet')}".replace('\n',' ') for i in data['items']]
+        return [f"標題:{i.get('title')} \n内容:{i.get('snippet')}" for i in data['items']]
     except Exception as e:
         st.error(f"搜尋錯誤: {e}")
         return []
 
-# --- 核心 AI 呼叫函式 (標準 SDK) ---
-def call_gemini(prompt):
-    """使用標準 google-generativeai SDK 呼叫 1.5-flash"""
-    try:
-        # ★★★ 這裡是最關鍵的修正，使用 GenerativeModel ★★★
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        if "429" in str(e):
-            st.warning("API 額度忙碌中，請稍後再試...")
-            time.sleep(2)
-            return None
-        st.error(f"AI 呼叫失敗: {e}")
-        return None
-
-# --- Agent 函式區 ---
+# --- Agent 團隊 (鎖定 2.5/2.0) ---
 
 def agent_data_curator(course_name, raw_data):
-    """Agent 1: 資料清理探員"""
-    raw_text = "\n---\n".join(raw_data)
+    """Agent 1: 資料清理"""
+    raw_text = "\n---\n".join([r.replace('\n', ' ') for r in raw_data])
     prompt = f"""
-    你是資料清理專家。使用者想查詢北科大課程「{course_name}」。
-    以下是 Google 搜尋到的原始資料，可能包含廣告或雜訊。
-    請執行：
-    1. 過濾掉與「北科大」或該課程無關的資訊。
-    2. 過濾掉補習班廣告。
-    3. 只保留包含「評價」、「給分甜度」、「作業量」的相關句子。
-    
-    原始資料：
-    {raw_text}
-    
-    請直接輸出整理後的摘要：
+    你是資料清理專家。查詢目標：「{course_name}」。
+    請過濾掉廣告、無關資訊，只保留關於課程評價、老師教學風格、分數甜度的真實討論。
+    原始資料：{raw_text}
+    請直接輸出摘要：
     """
-    return call_gemini(prompt) or raw_text
+    return call_gemini_advanced(prompt) or raw_text
 
 def agent_senior_analyst(course_name, curated_data):
     """Agent 2: 首席分析師"""
     prompt = f"""
-    你現在是北科大的選課權威分析師。請根據以下「已過濾的真實評論」來分析課程「{course_name}」。
+    你現在是北科大選課權威。請分析課程「{course_name}」。
+    已過濾評論：{curated_data}
     
-    ### 已過濾評論：
-    {curated_data}
+    評分標準：S(神課/必搶), A(頂級/推), B(不錯/普通), C(無聊/涼但沒用), D(大刀/雷)。
     
-    ### 評分標準 (Rubric)：
-    1. **S級**：幾乎全好評、分數甜、必選。
-    2. **A級**：好評居多、學得到東西且分數不錯。
-    3. **B級**：評價兩極、或是中規中矩。
-    4. **C級**：無聊、涼但也學不到東西、或分數普通。
-    5. **D級**：負評居多、大刀、極度雷。
-
-    ### 輸出限制：
-    請務必輸出 **純 JSON 格式**，嚴禁使用 Markdown：
+    請務必輸出純 JSON：
     {{
-      "rank": "等級名稱 (e.g. 頂級)", 
-      "tier": "S/A/B/C/D", 
-      "score": 0-100的數值,
-      "reason": "犀利的一句話短評", 
-      "tags": ["標籤1", "標籤2", "標籤3"],
-      "details": "詳細的分析報告，包含給分甜度、作業考試狀況。"
+      "rank": "等級名稱", "tier": "S/A/B/C/D", "score": 分數,
+      "reason": "一句話短評", "tags": ["標籤1", "標籤2"], "details": "詳細說明"
     }}
     """
-    return call_gemini(prompt)
+    return call_gemini_advanced(prompt)
 
 def agent_json_guardrail(raw_response):
-    """Agent 3: 格式審查員 (自我修復)"""
+    """Agent 3: 格式審查"""
     if not raw_response: return None
-    
     cleaned_text = raw_response.replace("```json", "").replace("```", "").strip()
     try:
         return json.loads(cleaned_text)
-    except json.JSONDecodeError:
-        pass 
-    
-    # 修復機制
-    prompt = f"""
-    你是一個 JSON 修復工具。以下的文字應該要是 JSON，但格式錯誤。
-    請只輸出修正後的標準 JSON，不要有任何其他文字。
-    錯誤文字：{raw_response}
-    """
-    res = call_gemini(prompt)
-    if res:
-        fixed_text = res.replace("```json", "").replace("```", "").strip()
-        try:
-            return json.loads(fixed_text)
-        except:
-            return None
-    return None
+    except:
+        prompt = f"你是JSON修復工具。請修正以下錯誤格式並輸出純JSON:\n{raw_response}"
+        res_text = call_gemini_advanced(prompt)
+        if res_text:
+            fixed = res_text.replace("```json", "").replace("```", "").strip()
+            try: return json.loads(fixed)
+            except: return None
+        return None
 
-# --- 字體與圖片處理函式 ---
-
+# --- 圖片處理 ---
 def load_font(size):
     linux_font = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
     if os.path.exists(linux_font): return ImageFont.truetype(linux_font, size)
     mac_font = "/System/Library/Fonts/PingFang.ttc"
     if os.path.exists(mac_font): return ImageFont.truetype(mac_font, size)
-    mac_font_2 = "/System/Library/Fonts/STHeiti Light.ttc"
-    if os.path.exists(mac_font_2): return ImageFont.truetype(mac_font_2, size)
     return ImageFont.load_default()
 
 def get_fit_font(draw, text, max_width, max_height, initial_size):
@@ -240,39 +230,32 @@ def create_course_card(full_text, size=(150, 150)):
 def update_tier_list(course_name, tier_data):
     tier = tier_data.get('tier', 'C').upper()
     if tier not in ['S', 'A', 'B', 'C', 'D']: tier = 'C'
-
+    
     target_path = RESULT_IMAGE_PATH if os.path.exists(RESULT_IMAGE_PATH) else BASE_IMAGE_PATH
-    if not os.path.exists(target_path):
-        st.error(f"找不到底圖檔案：{target_path}")
-        return False
+    if not os.path.exists(target_path): return False
 
-    try:
-        base_img = Image.open(target_path).convert("RGBA")
-    except:
+    try: base_img = Image.open(target_path).convert("RGBA")
+    except: 
         if os.path.exists(BASE_IMAGE_PATH):
             base_img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
             st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
-        else:
-            st.error(f"無法重置，找不到原始底圖：{BASE_IMAGE_PATH}")
-            return False
+        else: return False
 
     W, H = base_img.size
     ROW_H = H / 5  
     START_X = int(W * 0.28)
     CARD_SIZE = int(ROW_H * 0.85) 
     PADDING = 10 
-    
     card_img = create_course_card(course_name, size=(CARD_SIZE, CARD_SIZE))
     
     tier_map = {'S': 0, 'A': 1, 'B': 2, 'C': 3, 'D': 4}
     row_index = tier_map.get(tier, 3)
-    
     count = st.session_state[SESSION_KEY][tier]
     pos_y = int((row_index * ROW_H) + (ROW_H - CARD_SIZE) / 2)
     pos_x = START_X + (count * (CARD_SIZE + PADDING))
     
     if pos_x + CARD_SIZE > W:
-        st.warning(f"{tier} 級已滿，無法再貼圖片了！")
+        st.warning(f"{tier} 級已滿！")
         return False
 
     base_img.alpha_composite(card_img, (pos_x, pos_y))
@@ -281,11 +264,11 @@ def update_tier_list(course_name, tier_data):
     return True
 
 # ==========================================
-# 4. 網頁主介面
+# 5. 網頁主介面
 # ==========================================
 
-st.title("北科大課程 AI 評價系統")
-st.markdown("輸入課程名稱，AI 幫你爬文、分析評價，並自動生成Tier List！")
+st.title("🎓 北科大課程 AI 評價系統")
+st.markdown("輸入課程名稱，AI 幫你分析評價 (Tier List)！")
 
 col1, col2, col3 = st.columns([3, 0.5, 1.5], vertical_alignment="bottom")
 
@@ -298,7 +281,7 @@ with col2:
 if search_btn or query:
     if not query:
         st.warning("請輸入課程名稱！")
-    elif not GEMINI_API_KEY or not GOOGLE_SEARCH_API_KEY:
+    elif not GEMINI_API_KEY:
         st.error("請先設定 API Keys")
     else:
         with st.status("🤖 Agent 團隊啟動中...", expanded=True) as status:
@@ -311,26 +294,24 @@ if search_btn or query:
                 status.update(label="搜尋失敗", state="error")
                 st.error("找不到相關評論，請換個關鍵字試試。")
             else:
-                # 這裡加入了你要求的「查看原始資料」折疊區
                 with st.expander("📄 點擊查看 Google 搜尋到的原始資料"):
                     for idx, res in enumerate(raw_results):
                         st.markdown(f"**結果 {idx+1}:**")
                         st.text(res)
                         st.divider()
 
-                # Step 2: Agent 1 (資料探員)
+                # Step 2: Agent 1 (資料探員) - 2.5-flash
                 st.write("🕵️‍♂️ [Agent 1] 資料探員：正在過濾雜訊與廣告...")
                 curated_content = agent_data_curator(query, raw_results)
                 
-                # 這裡加入了「查看摘要」折疊區
                 with st.expander("📝 點擊查看 Agent 1 整理後的重點摘要"):
                     st.markdown(curated_content)
 
-                # Step 3: Agent 2 (首席分析師)
+                # Step 3: Agent 2 (首席分析師) - 2.5-flash
                 st.write("👨‍🏫 [Agent 2] 首席分析師：正在進行評級與撰寫報告...")
                 analysis_raw_text = agent_senior_analyst(query, curated_content)
                 
-                # Step 4: Agent 3 (格式審查員)
+                # Step 4: Agent 3 (格式審查員) - 2.5-flash
                 st.write("🤖 [Agent 3] 審查員：正在驗證資料格式...")
                 data = agent_json_guardrail(analysis_raw_text)
                 
