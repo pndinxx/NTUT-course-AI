@@ -112,16 +112,19 @@ def search_google_text(query):
             return []
         data = response.json()
         if 'items' not in data: return []
-        return [f"標題:{i.get('title')} 内容:{i.get('snippet')}".replace('\n',' ') for i in data['items']]
+        # 回傳原始字串列表，方便 Agent 處理
+        return [f"標題:{i.get('title')} \n内容:{i.get('snippet')}" for i in data['items']]
     except Exception as e:
         st.error(f"搜尋錯誤: {e}")
         return []
 
-# --- 新增 Agent 函式區 ---
+# --- Agent 函式區 (全部鎖定 2.5-flash) ---
 
 def agent_data_curator(course_name, raw_data):
     """Agent 1: 資料清理探員"""
-    raw_text = "\n---\n".join(raw_data)
+    # 稍微整理一下輸入格式
+    raw_text = "\n---\n".join([r.replace('\n', ' ') for r in raw_data])
+    
     prompt = f"""
     你是資料清理專家。使用者想查詢北科大課程「{course_name}」。
     以下是 Google 搜尋到的原始資料，可能包含廣告或雜訊。
@@ -129,6 +132,7 @@ def agent_data_curator(course_name, raw_data):
     1. 過濾掉與「北科大」或該課程無關的資訊。
     2. 過濾掉補習班廣告。
     3. 只保留包含「評價」、「給分甜度」、「作業量」的相關句子。
+    4. 將重點整理成條列式摘要 (Bullet points)。
     
     原始資料：
     {raw_text}
@@ -136,10 +140,10 @@ def agent_data_curator(course_name, raw_data):
     請直接輸出整理後的摘要：
     """
     try:
-        # 用 flash 比較快且便宜
         res = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         return res.text
-    except:
+    except Exception as e:
+        st.warning(f"Agent 1 失敗: {e}")
         return raw_text # 失敗就回傳原始資料
 
 def agent_senior_analyst(course_name, curated_data):
@@ -168,14 +172,12 @@ def agent_senior_analyst(course_name, curated_data):
       "details": "詳細的分析報告，包含給分甜度、作業考試狀況。"
     }}
     """
-    # 嘗試用 pro 模型分析，如果失敗改用 flash
-    models = ["gemini-pro", "gemini-2.5-flash"]
-    for m in models:
-        try:
-            res = client.models.generate_content(model=m, contents=prompt)
-            return res.text
-        except: continue
-    return None
+    try:
+        res = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        return res.text
+    except Exception as e:
+        st.warning(f"Agent 2 失敗: {e}")
+        return None
 
 def agent_json_guardrail(raw_response):
     """Agent 3: 格式審查員 (自我修復)"""
@@ -198,7 +200,8 @@ def agent_json_guardrail(raw_response):
         res = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
         fixed_text = res.text.replace("```json", "").replace("```", "").strip()
         return json.loads(fixed_text)
-    except:
+    except Exception as e:
+        st.warning(f"Agent 3 失敗: {e}")
         return None
 
 # --- 字體與圖片處理函式 (保持原樣) ---
@@ -305,7 +308,6 @@ def update_tier_list(course_name, tier_data):
 st.title("北科大課程 AI 評價系統")
 st.markdown("輸入課程名稱，AI 幫你爬文、分析評價，並自動生成Tier List！")
 
-# === 這裡保留你的 UI 設定，完全沒動 ===
 col1, col2, col3 = st.columns([3, 0.5, 1.5], vertical_alignment="bottom")
 
 with col1:
@@ -314,7 +316,7 @@ with col2:
     search_btn = st.button("搜尋", use_container_width=True)
 # col3 空著當右邊的留白
 
-# 主邏輯 (更新為 Agent 工作流)
+# 主邏輯
 if search_btn or query:
     if not query:
         st.warning("請輸入課程名稱！")
@@ -332,15 +334,26 @@ if search_btn or query:
                 status.update(label="搜尋失敗", state="error")
                 st.error("找不到相關評論，請換個關鍵字試試。")
             else:
-                # Step 2: Agent 1 (資料探員)
+                # ★★★ 新增：顯示原始資料 (折疊) ★★★
+                with st.expander("📄 點擊查看 Google 搜尋到的原始資料", expanded=False):
+                    for idx, res in enumerate(raw_results):
+                        st.markdown(f"**結果 {idx+1}:**")
+                        st.text(res) # 使用 text 比較整齊，不會被 markdown 格式跑版
+                        st.divider()
+
+                # Step 2: Agent 1 (資料探員) - 2.5-flash
                 st.write("🕵️‍♂️ [Agent 1] 資料探員：正在過濾雜訊與廣告...")
                 curated_content = agent_data_curator(query, raw_results)
                 
-                # Step 3: Agent 2 (首席分析師)
+                # ★★★ 新增：顯示整理後的重點 (折疊) ★★★
+                with st.expander("📝 點擊查看 Agent 1 整理後的重點摘要", expanded=False):
+                    st.markdown(curated_content)
+
+                # Step 3: Agent 2 (首席分析師) - 2.5-flash
                 st.write("👨‍🏫 [Agent 2] 首席分析師：正在進行評級與撰寫報告...")
                 analysis_raw_text = agent_senior_analyst(query, curated_content)
                 
-                # Step 4: Agent 3 (格式審查員)
+                # Step 4: Agent 3 (格式審查員) - 2.5-flash
                 st.write("🤖 [Agent 3] 審查員：正在驗證資料格式...")
                 data = agent_json_guardrail(analysis_raw_text)
                 
