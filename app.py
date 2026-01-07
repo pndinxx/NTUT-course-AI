@@ -2,20 +2,34 @@ import streamlit as st
 import os
 import requests
 import json
-from google import genai
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
-import time 
+import time
+
+# ==========================================
+# 0. 雙重 SDK 匯入 (Hybrid SDK Import)
+# ==========================================
+# 嘗試匯入舊版 SDK (穩定版)
+try:
+    import google.generativeai as genai_v1
+    HAS_V1_SDK = True
+except ImportError:
+    HAS_V1_SDK = False
+
+# 嘗試匯入新版 SDK (實驗版)
+try:
+    from google import genai as genai_v2
+    HAS_V2_SDK = True
+except ImportError:
+    HAS_V2_SDK = False
 
 # ==========================================
 # 1. 設定頁面與 API Keys
 # ==========================================
 st.set_page_config(page_title="北科大AI選課顧問", layout="wide")
 
-# 路徑設定
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# --- 安全讀取 API Key ---
 def get_secret(key_name):
     try:
         return st.secrets[key_name]
@@ -35,19 +49,70 @@ if not GEMINI_API_KEY:
         GOOGLE_SEARCH_API_KEY = st.text_input("請輸入 Google Search Key", type="password")
         SEARCH_ENGINE_ID = st.text_input("請輸入 Search Engine ID")
 
-@st.cache_resource
-def get_gemini_client(api_key):
-    if not api_key: return None
-    try:
-        return genai.Client(api_key=api_key)
-    except Exception as e:
-        st.error(f"Gemini 初始化失敗: {e}")
-        return None
-
-client = get_gemini_client(GEMINI_API_KEY)
+# --- 初始化雙客戶端 ---
+client_v2 = None
+if GEMINI_API_KEY:
+    # 1. 初始化舊版 (V1)
+    if HAS_V1_SDK:
+        genai_v1.configure(api_key=GEMINI_API_KEY)
+    
+    # 2. 初始化新版 (V2)
+    if HAS_V2_SDK:
+        try:
+            client_v2 = genai_v2.Client(api_key=GEMINI_API_KEY)
+        except Exception as e:
+            st.error(f"V2 SDK 初始化失敗: {e}")
 
 # ==========================================
-# 2. 側邊欄與狀態設定
+# 2. 核心：混合呼叫引擎 (The Hybrid Engine)
+# ==========================================
+def call_gemini_hybrid(contents):
+    """
+    策略：
+    1. 先嘗試用 google-genai 呼叫 gemini-2.5-flash
+    2. 失敗則用 google-generativeai 呼叫 gemini-1.5-flash
+    """
+    
+    # --- 策略 A: 優先嘗試 V2 SDK + 2.5-flash ---
+    if HAS_V2_SDK and client_v2:
+        try:
+            # 嘗試呼叫 2.5
+            response = client_v2.models.generate_content(
+                model="gemini-2.5-flash", 
+                contents=contents
+            )
+            return response.text
+        except Exception as e:
+            # 如果失敗 (404, 429)，只記錄不報錯，繼續往下走
+            # st.toast(f"⚠️ 2.5-flash 呼叫失敗，切換至 1.5 備援...", icon="🔀")
+            pass
+
+    # --- 策略 B: 備援使用 V1 SDK + 1.5-flash ---
+    if HAS_V1_SDK:
+        try:
+            model = genai_v1.GenerativeModel("gemini-1.5-flash")
+            # 這裡加上簡單的重試機制，防止 1.5 也忙碌
+            for i in range(2):
+                try:
+                    response = model.generate_content(contents)
+                    return response.text
+                except Exception as e:
+                    if "429" in str(e):
+                        time.sleep(2)
+                        continue
+                    else:
+                        raise e
+        except Exception as e:
+            st.warning(f"❌ 所有模型嘗試皆失敗 (V1 & V2): {e}")
+            return None
+    else:
+        st.error("❌ 嚴重錯誤：找不到 google-generativeai 套件，無法執行備援。")
+        return None
+
+    return None
+
+# ==========================================
+# 3. 側邊欄與狀態設定
 # ==========================================
 if 'current_analysis_data' not in st.session_state:
     st.session_state.current_analysis_data = None
@@ -85,7 +150,7 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# 3. 功能函式
+# 4. 功能函式
 # ==========================================
 
 def search_google_text(query, mode="analysis"):
@@ -111,48 +176,7 @@ def search_google_text(query, mode="analysis"):
         st.error(f"搜尋錯誤: {e}")
         return []
 
-# --- ★★★ 核心修改：模型輪盤 (解決 404/429) ★★★ ---
-def call_gemini_safe(contents):
-    """
-    自動嘗試多種模型名稱，直到成功為止。
-    解決 404 (找不到模型) 和 429 (額度滿) 的問題。
-    """
-    # 這裡列出所有可能的 1.5-flash 名稱，越精確的放後面當備案
-    candidate_models = [
-        "gemini-1.5-flash",          # 標準別名
-        "gemini-1.5-flash-latest",   # 最新別名
-        "gemini-1.5-flash-002",      # 指定版本 v002 (最穩)
-        "gemini-1.5-flash-001",      # 指定版本 v001
-    ]
-    
-    last_error = None
-
-    for model_name in candidate_models:
-        try:
-            # 嘗試呼叫 API
-            res = client.models.generate_content(model=model_name, contents=contents)
-            return res.text # 成功就直接回傳
-        except Exception as e:
-            error_msg = str(e)
-            last_error = error_msg
-            
-            # 如果是 429 (額度滿)，這很嚴重，先睡一下再換下一個模型試試
-            if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                time.sleep(2) 
-                continue 
-            
-            # 如果是 404 (找不到)，直接試下一個名字，不用等
-            if "404" in error_msg or "NOT_FOUND" in error_msg:
-                continue
-
-            # 其他錯誤 (如 500)，也試下一個
-            continue
-
-    # 如果全部都失敗，印出最後一個錯誤
-    st.warning(f"所有模型嘗試皆失敗。最後錯誤: {last_error}")
-    return None
-
-# --- Agent 團隊 (現在統一呼叫 call_gemini_safe) ---
+# --- Agent 團隊 (全部改用 call_gemini_hybrid) ---
 
 def agent_data_curator(course_name, raw_data):
     """Agent 1: 資料清理"""
@@ -163,7 +187,7 @@ def agent_data_curator(course_name, raw_data):
     原始資料：{raw_text}
     請直接輸出摘要：
     """
-    return call_gemini_safe(prompt) or raw_text
+    return call_gemini_hybrid(prompt) or raw_text
 
 def agent_senior_analyst(course_name, curated_data):
     """Agent 2: 首席分析師"""
@@ -179,7 +203,7 @@ def agent_senior_analyst(course_name, curated_data):
       "reason": "一句話短評", "tags": ["標籤1", "標籤2"], "details": "詳細說明"
     }}
     """
-    return call_gemini_safe(prompt)
+    return call_gemini_hybrid(prompt)
 
 def agent_course_recommender(category, raw_data):
     """Agent 4: 獵頭顧問"""
@@ -202,7 +226,7 @@ def agent_course_recommender(category, raw_data):
       ... (最多3個)
     ]
     """
-    return call_gemini_safe(prompt)
+    return call_gemini_hybrid(prompt)
 
 def agent_json_guardrail(raw_response, is_list=False):
     """Agent 3: 格式審查"""
@@ -211,9 +235,8 @@ def agent_json_guardrail(raw_response, is_list=False):
     try:
         return json.loads(cleaned_text)
     except:
-        # 修復模式
         prompt = f"你是JSON修復工具。請修正以下錯誤格式並輸出純JSON:\n{raw_response}"
-        res_text = call_gemini_safe(prompt)
+        res_text = call_gemini_hybrid(prompt)
         if res_text:
             fixed = res_text.replace("```json", "").replace("```", "").strip()
             try: return json.loads(fixed)
@@ -308,7 +331,7 @@ def update_tier_list(course_name, tier_data):
     return True
 
 # ==========================================
-# 4. 網頁主介面
+# 5. 網頁主介面
 # ==========================================
 
 st.title("🎓 北科大課程 AI 評價系統")
