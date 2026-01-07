@@ -41,40 +41,31 @@ def call_gemini_advanced(contents):
     優先使用 gemini-2.5-flash。
     如果遇到額度限制 (429)，自動降級到 gemini-2.0-flash。
     """
-    # 你的清單中最強的兩個 Flash 模型
     primary_model = "gemini-2.5-flash"
     backup_model = "gemini-2.0-flash" 
 
-    # 1. 嘗試 Primary (2.5)
     try:
         model = genai.GenerativeModel(primary_model)
         response = model.generate_content(contents)
         return response.text
     except Exception as e:
         error_msg = str(e)
-        
-        # 如果是 429 (額度滿) 或 404 (暫時連不上)
         if "429" in error_msg or "404" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            # st.toast(f"⚠️ {primary_model} 額度滿了，切換至 {backup_model}...", icon="🔀")
-            time.sleep(2) # 稍微冷卻
-            
-            # 2. 嘗試 Backup (2.0)
+            time.sleep(1) 
             try:
                 fallback = genai.GenerativeModel(backup_model)
                 response = fallback.generate_content(contents)
                 return response.text
             except Exception as e2:
-                st.error(f"❌ 所有模型 (2.5 & 2.0) 皆失敗: {e2}")
+                st.error(f"❌ 所有模型皆失敗: {e2}")
                 return None
         else:
-            # 其他錯誤直接報錯
-            st.error(f"❌ 模型呼叫錯誤 ({primary_model}): {e}")
+            st.error(f"❌ 模型呼叫錯誤: {e}")
             return None
 
 # ==========================================
 # 3. 側邊欄與狀態設定
 # ==========================================
-# 初始化 Session State (分辨目前是分析還是推薦)
 if 'current_analysis_data' not in st.session_state:
     st.session_state.current_analysis_data = None
 if 'current_recommend_data' not in st.session_state:
@@ -84,7 +75,7 @@ with st.sidebar:
     st.header("介面設定")
     version_option = st.radio("選擇 Tier List 版本", ("中文", "英文"), index=0)
     
-    st.info("🚀 策略: 優先 2.5-flash → 備援 2.0-flash")
+    st.success("🚀 分數機制：0~100 數值量化")
 
     if version_option == "中文":
         BASE_IMAGE_FILENAME = "tier_list.png"
@@ -112,7 +103,7 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# 4. 功能函式 (搜尋、Agent、繪圖)
+# 4. 功能函式
 # ==========================================
 
 def search_google_text(query, mode="analysis"):
@@ -120,9 +111,7 @@ def search_google_text(query, mode="analysis"):
         st.error("缺少 Google Search API Key")
         return []
     
-    # 根據模式調整搜尋關鍵字
     search_suffix = "評價 心得" if mode == "analysis" else "推薦 甜涼 好過"
-    
     url = "https://www.googleapis.com/customsearch/v1"
     params = {
         'key': GOOGLE_SEARCH_API_KEY,
@@ -155,22 +144,33 @@ def agent_data_curator(course_name, raw_data):
 
 def agent_senior_analyst(course_name, curated_data):
     """Agent 2: 首席分析師 (Tier List 用)"""
+    # ★★★ 這裡加入了明確的 0-100 分數邏輯 ★★★
     prompt = f"""
     你現在是北科大選課權威。請分析課程「{course_name}」。
     已過濾評論：{curated_data}
     
-    評分標準：S(神課/必搶), A(頂級/推), B(不錯/普通), C(無聊/涼但沒用), D(大刀/雷)。
+    ### 評分標準 (0~100分)：
+    請根據評論的「甜度(給分高低)」、「涼度(作業多寡)」、「推薦程度」綜合評分。
+    - **90-100分 (S級)**：神課、必搶、幾乎全好評。
+    - **80-89分 (A級)**：頂級、推薦、分數不錯。
+    - **70-79分 (B級)**：普通、中規中矩、評價兩極。
+    - **60-69分 (C級)**：無聊、涼但沒用、或分數給得不乾脆。
+    - **0-59分 (D級)**：大刀、快逃、當人、極差。
     
     請務必輸出純 JSON：
     {{
-      "rank": "等級名稱", "tier": "S/A/B/C/D", "score": 分數,
-      "reason": "一句話短評", "tags": ["標籤1", "標籤2"], "details": "詳細說明"
+      "rank": "等級名稱 (e.g. 頂級)", 
+      "tier": "S/A/B/C/D", 
+      "score": 0-100的整數, 
+      "reason": "一句話短評", 
+      "tags": ["標籤1", "標籤2"], 
+      "details": "詳細說明"
     }}
     """
     return call_gemini_advanced(prompt)
 
 def agent_course_recommender(category, raw_data):
-    """★ Agent 4: 獵頭顧問 (推薦用) ★"""
+    """Agent 4: 獵頭顧問"""
     raw_text = "\n---\n".join(raw_data)
     prompt = f"""
     你是北科大選課推薦顧問。使用者想找「{category}」類別的好課。
@@ -179,12 +179,12 @@ def agent_course_recommender(category, raw_data):
     搜尋資料：
     {raw_text}
     
-    請務必輸出純 JSON 格式的列表 (List of Objects)：
+    請務必輸出純 JSON 格式的列表：
     [
       {{
         "teacher": "老師姓名 (若無則填課程名)",
-        "subject": "具體課程 (e.g. 羽球, 電影欣賞)",
-        "reason": "推薦理由 (e.g. 老師人好、不點名、學很多)",
+        "subject": "具體課程",
+        "reason": "推薦理由",
         "stars": "推薦指數 (1-5)"
       }},
       ... (最多3個)
@@ -193,13 +193,12 @@ def agent_course_recommender(category, raw_data):
     return call_gemini_advanced(prompt)
 
 def agent_json_guardrail(raw_response, is_list=False):
-    """Agent 3: 格式審查 (支援 List 和 Dict)"""
+    """Agent 3: 格式審查"""
     if not raw_response: return None
     cleaned_text = raw_response.replace("```json", "").replace("```", "").strip()
     try:
         return json.loads(cleaned_text)
     except:
-        # 修復模式
         prompt = f"你是JSON修復工具。請修正以下錯誤格式並輸出純JSON:\n{raw_response}"
         res_text = call_gemini_advanced(prompt)
         if res_text:
@@ -298,9 +297,8 @@ def update_tier_list(course_name, tier_data):
 # ==========================================
 
 st.title("🎓 北科大課程 AI 選課顧問")
-st.markdown("輸入課程名稱，AI 幫你 **分析評價** 或 **推薦好老師**！")
+st.markdown("輸入課程名稱，AI 幫你 **分析評價 (0~100分)** 或 **推薦好老師**！")
 
-# UI 改版：三個欄位 (輸入框 + 按鈕 A + 按鈕 B)
 c_input, c_btn1, c_btn2, c_space = st.columns([3, 1, 1, 1], vertical_alignment="bottom")
 
 with c_input:
@@ -310,7 +308,7 @@ with c_btn1:
 with c_btn2:
     btn_recommend = st.button("✨ 幫我推薦老師", use_container_width=True)
 
-# === 邏輯 A: 分析特定課程 (原本功能) ===
+# === 邏輯 A: 分析特定課程 ===
 if btn_analyze and query:
     if not GEMINI_API_KEY: st.error("請設定 API Key"); st.stop()
     
@@ -328,7 +326,7 @@ if btn_analyze and query:
             curated = agent_data_curator(query, raw_results)
             with st.expander("📝 查看過濾後摘要"): st.write(curated)
             
-            st.write("👨‍🏫 [Agent 2] 進行評級...")
+            st.write("👨‍🏫 [Agent 2] 進行評級 (計算 0-100 分)...")
             raw_analysis = agent_senior_analyst(query, curated)
             
             st.write("🤖 [Agent 3] 格式驗證...")
@@ -337,18 +335,17 @@ if btn_analyze and query:
             if data:
                 status.update(label="分析完成！", state="complete")
                 st.session_state.current_analysis_data = data
-                st.session_state.current_recommend_data = None # 清空推薦結果以免混淆
+                st.session_state.current_recommend_data = None 
                 update_tier_list(query, data)
             else:
                 status.update(label="失敗", state="error")
 
-# === 邏輯 B: 推薦好老師 (新功能) ===
+# === 邏輯 B: 推薦好老師 ===
 if btn_recommend and query:
     if not GEMINI_API_KEY: st.error("請設定 API Key"); st.stop()
     
     with st.status("🤖 獵頭顧問啟動中 (推薦模式)...", expanded=True) as status:
         st.write(f"🔍 [System] 正在搜尋「{query}」相關的高評價課程...")
-        # 這裡搜尋關鍵字會變： "北科大 {query} 推薦"
         raw_results = search_google_text(query, mode="recommend")
         
         if not raw_results:
@@ -361,22 +358,19 @@ if btn_recommend and query:
             raw_recs = agent_course_recommender(query, raw_results)
             
             st.write("🤖 [Agent 3] 格式驗證...")
-            # 這裡 guardrail 要支援 List
             rec_list = agent_json_guardrail(raw_recs, is_list=True)
             
             if rec_list:
                 status.update(label="推薦清單已生成！", state="complete")
                 st.session_state.current_recommend_data = rec_list
-                st.session_state.current_analysis_data = None # 清空分析結果
+                st.session_state.current_analysis_data = None 
             else:
                 status.update(label="失敗", state="error")
 
 # === 結果顯示區 ===
 
-# 1. 顯示推薦結果 (如果有的話)
 if st.session_state.current_recommend_data:
     st.subheader(f"✨ 「{query}」推薦清單")
-    # 用 columns 排版成卡片
     rec_cols = st.columns(3)
     for idx, rec in enumerate(st.session_state.current_recommend_data):
         with rec_cols[idx % 3]:
@@ -388,20 +382,18 @@ if st.session_state.current_recommend_data:
                 if st.button(f"分析 {rec.get('teacher')}", key=f"btn_rec_{idx}"):
                     st.toast(f"請在上方搜尋欄輸入「{rec.get('teacher')}」進行詳細評級！")
 
-# 2. 顯示分析結果 (原本的 Tier List 介面)
 elif st.session_state.current_analysis_data:
     data = st.session_state.current_analysis_data
     st.divider()
     c1, c2 = st.columns([1, 2])
     with c1:
-        st.metric(label="評級", value=f"{data.get('tier')} 級", delta=f"分數: {data.get('score')}")
+        st.metric(label="評級", value=f"{data.get('tier')} 級", delta=f"{data.get('score')} 分")
         st.caption(f"稱號: {data.get('rank')}")
         st.info(f"💡 {data.get('reason')}")
     with c2:
         st.subheader("詳細評價")
         st.write(data.get('details'))
 
-# 3. 永遠顯示 Tier List 圖片 (只要圖存在)
 if os.path.exists(RESULT_IMAGE_PATH):
     st.divider()
     st.subheader(f"🏆 課程排位榜單 ({version_option})")
