@@ -90,7 +90,7 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# 3. 功能函式 (搜尋、分析、繪圖)
+# 3. 功能函式 (搜尋、Agent 分析、繪圖)
 # ==========================================
 
 def search_google_text(query):
@@ -117,64 +117,99 @@ def search_google_text(query):
         st.error(f"搜尋錯誤: {e}")
         return []
 
-def analyze_with_gemini(course_name, search_results):
-    if not client: 
-        st.error("Gemini Client 未初始化 (請檢查 API Key)")
-        return None
-    
-    reviews_text = "\n---\n".join(search_results)
+# --- 新增 Agent 函式區 ---
+
+def agent_data_curator(course_name, raw_data):
+    """Agent 1: 資料清理探員"""
+    raw_text = "\n---\n".join(raw_data)
     prompt = f"""
-    你現在是一位精通「北科大」校園生態的選課分析師。
-    請根據以下網路搜尋到的評論摘要，分析課程「{course_name}」。
+    你是資料清理專家。使用者想查詢北科大課程「{course_name}」。
+    以下是 Google 搜尋到的原始資料，可能包含廣告或雜訊。
+    請執行：
+    1. 過濾掉與「北科大」或該課程無關的資訊。
+    2. 過濾掉補習班廣告。
+    3. 只保留包含「評價」、「給分甜度」、「作業量」的相關句子。
     
-    ### 等級定義 (Rubric)：
-    1. **S級 - 夯** (最高榮耀)：神課、必搶、甜涼
-    2. **A級 - 頂級**：極度推薦、分數高、老師人好
-    3. **B級 - 人上人**：還不錯、給分大方、學得到東西
-    4. **C級 - NPC**：普通、無聊、中規中矩、沒記憶點
-    5. **D級 - 拉完了** (最低評價)：大刀、快逃、當人、浪費時間
+    原始資料：
+    {raw_text}
+    
+    請直接輸出整理後的摘要：
+    """
+    try:
+        # 用 flash 比較快且便宜
+        res = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        return res.text
+    except:
+        return raw_text # 失敗就回傳原始資料
 
-    ### 評論資料摘要：
-    {reviews_text}
+def agent_senior_analyst(course_name, curated_data):
+    """Agent 2: 首席分析師"""
+    prompt = f"""
+    你現在是北科大的選課權威分析師。請根據以下「已過濾的真實評論」來分析課程「{course_name}」。
+    
+    ### 已過濾評論：
+    {curated_data}
+    
+    ### 評分標準 (Rubric)：
+    1. **S級**：幾乎全好評、分數甜、必選。
+    2. **A級**：好評居多、學得到東西且分數不錯。
+    3. **B級**：評價兩極、或是中規中矩。
+    4. **C級**：無聊、涼但也學不到東西、或分數普通。
+    5. **D級**：負評居多、大刀、極度雷。
 
-    ### 輸出需求：
-    請務必輸出純 JSON 格式，不要包含 Markdown 標記：
+    ### 輸出限制：
+    請務必輸出 **純 JSON 格式**，嚴禁使用 Markdown：
     {{
-      "rank": "等級名稱", "tier": "代號 (S/A/B/C/D)", "score": 分數,
-      "reason": "一句話短評", "tags": ["標籤1", "標籤2"],
-      "details": "詳細說明"
+      "rank": "等級名稱 (e.g. 頂級)", 
+      "tier": "S/A/B/C/D", 
+      "score": 0-100的數值,
+      "reason": "犀利的一句話短評", 
+      "tags": ["標籤1", "標籤2", "標籤3"],
+      "details": "詳細的分析報告，包含給分甜度、作業考試狀況。"
     }}
     """
-    models = ["gemini-2.5-flash", "gemini-pro"]
-    
+    # 嘗試用 pro 模型分析，如果失敗改用 flash
+    models = ["gemini-1.5-pro", "gemini-1.5-flash"]
     for m in models:
         try:
             res = client.models.generate_content(model=m, contents=prompt)
-            return json.loads(res.text.replace("```json", "").replace("```", "").strip())
-        except Exception as e:
-            # ★★★ 這裡就是你要的 Debug 顯示 ★★★
-            st.warning(f"模型 {m} 失敗，原因：{e}")
-            continue
-            
-    st.error("所有 AI 模型都分析失敗，請檢查上方的錯誤訊息。")
+            return res.text
+        except: continue
     return None
 
-# --- 字體載入 ---
-def load_font(size):
-    """自動尋找字體 (相容 Mac/Windows/Linux Streamlit Cloud)"""
-    # 1. Linux / Streamlit Cloud 專用
-    linux_font = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
-    if os.path.exists(linux_font):
-        return ImageFont.truetype(linux_font, size)
+def agent_json_guardrail(raw_response):
+    """Agent 3: 格式審查員 (自我修復)"""
+    if not raw_response: return None
+    
+    # 1. 嘗試直接解析
+    cleaned_text = raw_response.replace("```json", "").replace("```", "").strip()
+    try:
+        return json.loads(cleaned_text)
+    except json.JSONDecodeError:
+        pass 
+    
+    # 2. 修復機制
+    prompt = f"""
+    你是一個 JSON 修復工具。以下的文字應該要是 JSON，但格式錯誤。
+    請只輸出修正後的標準 JSON，不要有任何其他文字。
+    錯誤文字：{raw_response}
+    """
+    try:
+        res = client.models.generate_content(model="gemini-2.5-flash", contents=prompt)
+        fixed_text = res.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(fixed_text)
+    except:
+        return None
 
-    # 2. Mac 專用
+# --- 字體與圖片處理函式 (保持原樣) ---
+
+def load_font(size):
+    linux_font = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
+    if os.path.exists(linux_font): return ImageFont.truetype(linux_font, size)
     mac_font = "/System/Library/Fonts/PingFang.ttc"
     if os.path.exists(mac_font): return ImageFont.truetype(mac_font, size)
-    
-    # 3. 其他備用
     mac_font_2 = "/System/Library/Fonts/STHeiti Light.ttc"
     if os.path.exists(mac_font_2): return ImageFont.truetype(mac_font_2, size)
-    
     return ImageFont.load_default()
 
 def get_fit_font(draw, text, max_width, max_height, initial_size):
@@ -224,7 +259,6 @@ def update_tier_list(course_name, tier_data):
     tier = tier_data.get('tier', 'C').upper()
     if tier not in ['S', 'A', 'B', 'C', 'D']: tier = 'C'
 
-    # 讀取圖片 (優先讀取已存在的結果圖，若無則讀取當前選擇的底圖)
     target_path = RESULT_IMAGE_PATH if os.path.exists(RESULT_IMAGE_PATH) else BASE_IMAGE_PATH
     if not os.path.exists(target_path):
         st.error(f"找不到底圖檔案：{target_path} (請確認是否有上傳對應版本的圖片)")
@@ -233,10 +267,8 @@ def update_tier_list(course_name, tier_data):
     try:
         base_img = Image.open(target_path).convert("RGBA")
     except:
-        # 如果壞了，重讀原始底圖
         if os.path.exists(BASE_IMAGE_PATH):
             base_img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
-            # 重置計數
             st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
         else:
             st.error(f"無法重置，找不到原始底圖：{BASE_IMAGE_PATH}")
@@ -253,7 +285,7 @@ def update_tier_list(course_name, tier_data):
     tier_map = {'S': 0, 'A': 1, 'B': 2, 'C': 3, 'D': 4}
     row_index = tier_map.get(tier, 3)
     
-    count = st.session_state[SESSION_KEY][tier] # 使用對應版本的計數器
+    count = st.session_state[SESSION_KEY][tier]
     pos_y = int((row_index * ROW_H) + (ROW_H - CARD_SIZE) / 2)
     pos_x = START_X + (count * (CARD_SIZE + PADDING))
     
@@ -273,7 +305,7 @@ def update_tier_list(course_name, tier_data):
 st.title("北科大課程 AI 評價系統")
 st.markdown("輸入課程名稱，AI 幫你爬文、分析評價，並自動生成Tier List！")
 
-# 改成 [1.5, 0.5, 2] -> 搜尋欄跟按鈕只佔左半邊，右邊留一大塊白
+# === 這裡保留你的 UI 設定，完全沒動 ===
 col1, col2, col3 = st.columns([3, 0.5, 1.5], vertical_alignment="bottom")
 
 with col1:
@@ -282,23 +314,35 @@ with col2:
     search_btn = st.button("搜尋", use_container_width=True)
 # col3 空著當右邊的留白
 
-# 主邏輯
+# 主邏輯 (更新為 Agent 工作流)
 if search_btn or query:
     if not query:
         st.warning("請輸入課程名稱！")
     elif not GEMINI_API_KEY or not GOOGLE_SEARCH_API_KEY:
         st.error("請先設定 API Keys")
     else:
-        with st.status("AI 正在分析中...", expanded=True) as status:
-            st.write("正在 Google 搜尋相關評論...")
-            results = search_google_text(query)
+        # 使用 status 顯示 Agent 工作狀態
+        with st.status("🤖 Agent 團隊啟動中...", expanded=True) as status:
             
-            if not results:
+            # Step 1: 搜尋
+            st.write("🔍 [System] 正在 Google 搜尋原始資料...")
+            raw_results = search_google_text(query)
+            
+            if not raw_results:
                 status.update(label="搜尋失敗", state="error")
                 st.error("找不到相關評論，請換個關鍵字試試。")
             else:
-                st.write("正在閱讀評論並分析...")
-                data = analyze_with_gemini(query, results)
+                # Step 2: Agent 1 (資料探員)
+                st.write("🕵️‍♂️ [Agent 1] 資料探員：正在過濾雜訊與廣告...")
+                curated_content = agent_data_curator(query, raw_results)
+                
+                # Step 3: Agent 2 (首席分析師)
+                st.write("👨‍🏫 [Agent 2] 首席分析師：正在進行評級與撰寫報告...")
+                analysis_raw_text = agent_senior_analyst(query, curated_content)
+                
+                # Step 4: Agent 3 (格式審查員)
+                st.write("🤖 [Agent 3] 審查員：正在驗證資料格式...")
+                data = agent_json_guardrail(analysis_raw_text)
                 
                 if data:
                     status.update(label="分析完成！", state="complete")
@@ -320,7 +364,8 @@ if search_btn or query:
                         st.success(f"已將「{query}」加入 {data.get('tier')} 級榜單！")
                     
                 else:
-                    status.update(label="AI 分析失敗", state="error")
+                    status.update(label="AI 分析失敗 (格式錯誤)", state="error")
+                    st.error("分析過程發生錯誤，請重試。")
 
 # 顯示圖片
 st.divider()
