@@ -169,7 +169,7 @@ def agent_senior_analyst(course_name, curated_data):
     }}
     """
     # 嘗試用 pro 模型分析，如果失敗改用 flash
-    models = ["gemini-1.5-pro", "gemini-1.5-flash"]
+    models = ["gemini-pro", "gemini-2.5-flash"]
     for m in models:
         try:
             res = client.models.generate_content(model=m, contents=prompt)
