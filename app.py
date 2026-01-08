@@ -294,10 +294,9 @@ def agent_fixer(text):
 # ==========================================
 st.title("北科大 AI 課程推薦系統")
 st.caption("(Powered by Google AI Studio)")
-st.caption("輸入「課程 老師」「老師」以查找評價，輸入「課程」以查找推薦教師")
 
 c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
-with c1: user_input = st.text_input("輸入課程/老師...", placeholder="例：微積分 羅仁傑")
+with c1: user_input = st.text_input("輸入「課程 老師」「老師」以查找評價，輸入「課程」以查找推薦教師", placeholder="例：物理 施坤龍")
 with c2: btn_search = st.button("智能搜尋", use_container_width=True, type="primary")
 
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = None
