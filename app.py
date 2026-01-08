@@ -4,7 +4,6 @@ import requests
 import json
 import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont
-import graphviz
 
 # ==========================================
 # 0. 設定與 API Keys
@@ -42,13 +41,11 @@ MODELS = {
 # ==========================================
 # 2. 圖片處理邏輯 (Tier List)
 # ==========================================
-# 設定圖片路徑
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULT_IMAGE_FILENAME = "final_tier_list.png"
 RESULT_IMAGE_PATH = os.path.join(BASE_DIR, RESULT_IMAGE_FILENAME)
 
 def get_font(size):
-    # 嘗試載入系統中文字型，失敗則用預設
     paths = [
         "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
         "/System/Library/Fonts/PingFang.ttc",
@@ -59,7 +56,6 @@ def get_font(size):
     return ImageFont.load_default()
 
 def create_base_tier_list():
-    """如果沒有底圖，自動畫一張"""
     W, H = 1200, 1000
     img = Image.new('RGB', (W, H), (30, 30, 30))
     draw = ImageDraw.Draw(img)
@@ -69,26 +65,19 @@ def create_base_tier_list():
     
     for idx, (tier, color) in enumerate(colors.items()):
         y = idx * row_h
-        # 畫色塊
         draw.rectangle([(0, y), (200, y + row_h)], fill=color)
         draw.rectangle([(0, y), (W, y + row_h)], outline='black', width=2)
-        # 畫文字
         draw.text((70, y + row_h//2 - 30), tier, fill='black', font=font)
-        # 畫分隔線
         draw.line([(0, y+row_h), (W, y+row_h)], fill='white', width=2)
     return img
 
 def create_course_card(text, size=(120, 120)):
-    """製作課程卡片"""
     img = Image.new('RGBA', size, (240, 240, 240, 255))
     draw = ImageDraw.Draw(img)
     draw.rectangle([(0,0), (size[0]-1, size[1]-1)], outline='black', width=3)
     
-    # 簡單自動換行與縮放
     font_size = 24
     font = get_font(font_size)
-    
-    # 這裡簡化處理，直接把字畫上去
     lines = text.split(' ')
     y_text = 20
     for line in lines:
@@ -97,14 +86,12 @@ def create_course_card(text, size=(120, 120)):
     return img
 
 def update_tier_list_image(course_name, tier):
-    """更新 Tier List"""
     if 'tier_counts' not in st.session_state:
         st.session_state.tier_counts = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
     
     tier = tier.upper()
     if tier not in ['S', 'A', 'B', 'C', 'D']: tier = 'C'
     
-    # 載入或新建底圖
     if os.path.exists(RESULT_IMAGE_PATH):
         base = Image.open(RESULT_IMAGE_PATH).convert("RGBA")
     else:
@@ -116,14 +103,12 @@ def update_tier_list_image(course_name, tier):
     START_X = 220
     PADDING = 10
     
-    # 計算位置
     count = st.session_state.tier_counts[tier]
     x = START_X + (count * (CARD_SIZE + PADDING))
     y_idx = {'S':0, 'A':1, 'B':2, 'C':3, 'D':4}[tier]
     y = y_idx * ROW_H + (ROW_H - CARD_SIZE) // 2
     
-    if x + CARD_SIZE > W:
-        return False # 滿了
+    if x + CARD_SIZE > W: return False
         
     card = create_course_card(course_name, size=(CARD_SIZE, CARD_SIZE))
     base.alpha_composite(card, (int(x), int(y)))
@@ -140,7 +125,6 @@ def call_ai(contents, model_name):
         model = genai.GenerativeModel(model_name)
         return model.generate_content(contents).text
     except Exception as e:
-        # Fallback
         try:
             fallback = genai.GenerativeModel("models/gemini-2.0-flash")
             return fallback.generate_content(contents).text
@@ -172,14 +156,14 @@ def search_google(query, mode="analysis"):
     try:
         res = requests.get(url, params=params, timeout=10)
         data = res.json()
-        return [f"[{i.get('title')}]\n{i.get('snippet')}" for i in data.get('items', [])]
+        # 回傳格式化好的 List
+        return [f"[{i.get('title')}]\n{i.get('snippet')}\nLink: {i.get('link')}" for i in data.get('items', [])]
     except: return []
 
 def agent_analyst(course_name, data):
     prompt = f"""
     分析目標：「{course_name}」。資料：{data}
     請評分 0-100 並給予 Tier (S/A/B/C/D)。
-    參考外校評價。
     JSON: {{"rank": "稱號", "tier": "S/A/B/C/D", "score": int, "reason": "短評", "tags": [], "details": "詳述"}}
     """
     return call_ai(prompt, MODELS["JUDGE"])
@@ -196,7 +180,6 @@ def agent_fixer(text):
 with st.sidebar:
     st.title("⚙️ 系統設定")
     st.info(f"主力模型: {MODELS['MANAGER'].split('/')[-1]}")
-    st.caption("簡易任務使用 Flash-Lite")
     
     st.divider()
     st.subheader("📊 Tier List 管理")
@@ -205,6 +188,8 @@ with st.sidebar:
             os.remove(RESULT_IMAGE_PATH)
         st.session_state.tier_counts = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
         st.session_state.analysis_result = None
+        st.session_state.debug_raw_data = None
+        st.session_state.debug_curated = None
         st.success("榜單已重置")
         st.rerun()
 
@@ -218,16 +203,18 @@ c1, c2 = st.columns([4, 1])
 with c1: user_input = st.text_input("輸入課程/老師...", placeholder="例：微積分 羅仁傑")
 with c2: btn_search = st.button("🔍 智能搜尋", use_container_width=True, type="primary")
 
+# 初始化 Session State
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = None
+if 'debug_raw_data' not in st.session_state: st.session_state.debug_raw_data = None
+if 'debug_curated' not in st.session_state: st.session_state.debug_curated = None
 
 if btn_search and user_input:
     if not GEMINI_API_KEY: st.error("缺 API Key"); st.stop()
     
-    # 使用 st.status 顯示步驟
     with st.status("🤖 Agent 團隊啟動中...", expanded=True) as status:
         
         # 1. Manager
-        st.write(f"🧠 Manager ({MODELS['MANAGER']})：正在判斷意圖...")
+        st.write(f"🧠 Manager：識別意圖中...")
         intent_data = agent_manager(user_input)
         intent = intent_data.get("intent", "recommend")
         keywords = intent_data.get("keywords", user_input)
@@ -236,15 +223,21 @@ if btn_search and user_input:
             st.info(f"目標：分析「{keywords}」")
             
             # 2. Search
-            st.write("🔍 Search Engine：正在廣域搜尋 (校內 + Dcard/PTT)...")
+            st.write("🔍 Search Engine：廣域搜尋中...")
             raw_data = search_google(keywords, mode="analysis")
+            st.session_state.debug_raw_data = raw_data # 保存原始搜尋結果
             
+            if not raw_data:
+                status.update(label="搜尋無結果", state="error")
+                st.stop()
+
             # 3. Cleaner
-            st.write(f"🧹 Cleaner ({MODELS['CLEANER']})：正在過濾雜訊...")
+            st.write(f"🧹 Cleaner：資料摘要中...")
             curated = call_ai(f"摘要重點評價，保留外校資訊：{raw_data}", MODELS["CLEANER"])
+            st.session_state.debug_curated = curated # 保存摘要
             
             # 4. Analyst
-            st.write(f"⚖️ Analyst ({MODELS['JUDGE']})：正在深度評分...")
+            st.write(f"⚖️ Analyst：深度評分中...")
             raw_res = agent_analyst(keywords, curated)
             final_data = agent_fixer(raw_res)
             
@@ -252,20 +245,17 @@ if btn_search and user_input:
                 st.session_state.analysis_result = final_data
                 
                 # 5. Update Tier List Image
-                st.write("🎨 Illustrator：正在繪製 Tier List...")
+                st.write("🎨 Illustrator：繪製圖表中...")
                 update_tier_list_image(keywords, final_data.get('tier', 'C'))
                 
                 status.update(label="分析完成！", state="complete")
             else:
                 status.update(label="分析失敗", state="error")
         else:
-            st.info(f"目標：推薦「{keywords}」")
-            st.write("🔍 Search Engine：搜尋熱門課程...")
-            # (這裡省略推薦邏輯以節省篇幅，專注於分析功能的完整性)
             status.update(label="推薦功能暫未完全整合圖片生成", state="complete")
 
 # ==========================================
-# 6. 結果顯示
+# 6. 結果顯示 (包含原始資料與分析摘要)
 # ==========================================
 if st.session_state.analysis_result:
     d = st.session_state.analysis_result
@@ -282,8 +272,25 @@ if st.session_state.analysis_result:
         st.caption("標籤：" + ", ".join(d.get('tags', [])))
         
     with col_img:
-        st.subheader("🏆 課程排位榜 (Tier List)")
+        st.subheader("🏆 課程排位榜")
         if os.path.exists(RESULT_IMAGE_PATH):
             st.image(RESULT_IMAGE_PATH, use_column_width=True)
+    
+    # === 新增：資料來源與分析細節 (類似原本的功能) ===
+    st.divider()
+    st.caption("🔍 資料來源與分析細節")
+    
+    with st.expander("📄 點擊查看 Google 原始搜尋資料 (Raw Data)"):
+        if st.session_state.debug_raw_data:
+            for idx, item in enumerate(st.session_state.debug_raw_data):
+                st.markdown(f"**Result {idx+1}:**")
+                st.text(item)
+                st.divider()
         else:
-            st.warning("尚無榜單圖片")
+            st.write("無資料")
+
+    with st.expander("🧠 點擊查看 AI 整理後的摘要 (Curated Data)"):
+        if st.session_state.debug_curated:
+            st.markdown(st.session_state.debug_curated)
+        else:
+            st.write("無資料")
