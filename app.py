@@ -47,9 +47,9 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 with st.sidebar:
     st.title("⚙️ 系統核心")
     
-    # --- 動態狀態顯示區 (Placeholder) ---
+    # --- 動態狀態顯示區 ---
     st.subheader("📡 即時運算狀態")
-    status_placeholder = st.empty() # 這是一個空的容器，稍後會動態填入內容
+    status_placeholder = st.empty() 
     
     def update_sidebar_status(agent_name, model_name, status="running"):
         """動態更新側邊欄狀態"""
@@ -98,7 +98,7 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# 3. 圖片處理 (保持不變)
+# 3. 圖片處理
 # ==========================================
 def load_font(size):
     paths = ["/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "C:\\Windows\\Fonts\\msjh.ttc", "C:\\Windows\\Fonts\\simhei.ttf"]
@@ -230,7 +230,7 @@ def agent_fixer(text):
     except: return None
 
 # ==========================================
-# 5. 主介面邏輯 (重點修改區)
+# 5. 主介面邏輯 (UI修改重點區)
 # ==========================================
 st.title("🎓 北科大 AI 選課顧問 (Pro版)")
 st.caption("🚀 Agent Workflow + Real-time Visualization")
@@ -256,9 +256,9 @@ if btn_search and user_input:
         intent = intent_data.get("intent", "recommend")
         keywords = intent_data.get("keywords", user_input)
         
-        # 顯示 Manager 結果
-        with st.expander(f"✅ 意圖識別: {intent.upper()}", expanded=True):
-            st.json(intent_data)
+        # [修改] 直接顯示意圖文字，不顯示 JSON
+        intent_text = "分析特定老師評價" if intent == "analyze" else "推薦相關課程"
+        st.success(f"✅ 意圖識別：**{intent_text}** (關鍵字：`{keywords}`)")
         
         if intent == "analyze":
             # 2. Search 階段
@@ -271,7 +271,7 @@ if btn_search and user_input:
                 update_sidebar_status("System", "Error", "error")
                 st.stop()
             
-            # 顯示搜尋結果
+            # 顯示搜尋結果 (保留)
             with st.expander(f"📄 原始搜尋資料 ({len(raw_data)} 筆)", expanded=False):
                 for item in raw_data:
                     st.text(item)
@@ -282,7 +282,7 @@ if btn_search and user_input:
             st.write("🧹 **Cleaner**: 正在閱讀並摘要資料...")
             curated = call_ai(f"摘要重點評價，保留外校資訊：{raw_data}", MODELS["CLEANER"])
             
-            # 顯示摘要結果
+            # 顯示摘要結果 (保留)
             with st.expander("📝 資料摘要", expanded=False):
                 st.markdown(curated)
 
@@ -292,9 +292,7 @@ if btn_search and user_input:
             raw_res = agent_analyst(keywords, curated)
             final_data = agent_fixer(raw_res)
             
-            # 顯示 JSON 結果
-            with st.expander("📊 評分數據 (JSON)", expanded=False):
-                st.json(final_data)
+            # [修改] 這裡的 JSON 被隱藏了，只保留狀態更新
             
             if final_data:
                 st.session_state.analysis_result = final_data
