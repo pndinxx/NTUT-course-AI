@@ -4,445 +4,315 @@ import requests
 import json
 import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont
-from io import BytesIO
-import time
+import graphviz
 
 # ==========================================
-# 1. 設定頁面與 API Keys
+# 0. 模型定義 (策略升級版)
 # ==========================================
-st.set_page_config(page_title="北科大AI選課顧問", layout="wide")
+# Manager & Judge (大腦): 使用最強的 2.5 Flash 處理複雜邏輯
+# Cleaner, Hunter, Fixer (手腳): 使用 2.5 Flash-Lite 處理簡易任務 (更省資源、速度更快)
+MODELS = {
+    "MANAGER": "models/gemini-2.5-flash",       # 中央大腦 (判斷意圖)
+    "JUDGE":   "models/gemini-2.5-flash",       # 首席分析師 (深度評分)
+    "CLEANER": "models/gemini-2.5-flash-lite",  # 資料清理 (Lite)
+    "HUNTER":  "models/gemini-2.5-flash-lite",  # 獵頭/推薦 (Lite)
+    "FIXER":   "models/gemini-2.5-flash-lite"   # 格式修復 (Lite)
+}
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+# ==========================================
+# 1. RAG 知識庫 (本地檔案)
+# ==========================================
+def retrieve_local_rag(query):
+    file_path = os.path.join(os.path.dirname(__file__), "knowledge.json")
+    if not os.path.exists(file_path): return None
+    try:
+        with open(file_path, "r", encoding='utf-8') as f:
+            knowledge_db = json.load(f)
+        results = []
+        for key, info in knowledge_db.items():
+            if key in query: results.append(info)
+        if results: return "\n".join(results)
+    except: pass
+    return None
 
-def get_secret(key_name):
-    try: return st.secrets[key_name]
-    except: return None 
+# ==========================================
+# 2. 設定頁面與 API Keys
+# ==========================================
+st.set_page_config(page_title="北科大AI選課顧問 (Manager版)", layout="wide")
 
-GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
-GOOGLE_SEARCH_API_KEY = get_secret("GOOGLE_SEARCH_API_KEY")
-SEARCH_ENGINE_ID = get_secret("SEARCH_ENGINE_ID")
+try:
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+    GOOGLE_SEARCH_API_KEY = st.secrets["GOOGLE_SEARCH_API_KEY"]
+    SEARCH_ENGINE_ID = st.secrets["SEARCH_ENGINE_ID"]
+except:
+    GEMINI_API_KEY = None; GOOGLE_SEARCH_API_KEY = None; SEARCH_ENGINE_ID = None
 
 if not GEMINI_API_KEY:
     with st.sidebar:
-        st.warning("偵測到本機執行且未設定 Secrets")
-        GEMINI_API_KEY = st.text_input("請輸入 Gemini API Key", type="password")
-        GOOGLE_SEARCH_API_KEY = st.text_input("請輸入 Google Search Key", type="password")
-        SEARCH_ENGINE_ID = st.text_input("請輸入 Search Engine ID")
+        st.warning("⚠️ 請輸入 API Keys")
+        GEMINI_API_KEY = st.text_input("Gemini API Key", type="password")
+        GOOGLE_SEARCH_API_KEY = st.text_input("Google Search Key", type="password")
+        SEARCH_ENGINE_ID = st.text_input("Search Engine ID")
 
-# 初始化 Gemini
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 2. 側邊欄設定 (提前定義，為了讓函式能存取佔位符)
+# 3. 核心：通用模型呼叫器
 # ==========================================
-# 初始化 Session State 來記住最後一次成功的模型
-if 'last_active_model' not in st.session_state:
-    st.session_state.last_active_model = None
-
-with st.sidebar:
-    st.header("🧠 AI 核心狀態")
-    
-    # ★★★ 關鍵：建立一個動態佔位符 ★★★
-    # 這個變數 status_placeholder 是全域的，下面的函式可以直接修改它
-    status_placeholder = st.empty()
-
-    # 如果之前有跑過，先顯示最後一次的狀態，不然顯示待機
-    if st.session_state.last_active_model:
-        if "2.5" in st.session_state.last_active_model:
-            status_placeholder.success(f"🚀 當前核心：\n{st.session_state.last_active_model}")
-        else:
-            status_placeholder.warning(f"🛡️ 當前核心 (備援)：\n{st.session_state.last_active_model}")
-    else:
-        status_placeholder.info("💤 系統待機中...")
-
-    st.divider()
-    st.header("介面設定")
-    version_option = st.radio("選擇 Tier List 版本", ("中文", "英文"), index=0)
-
-    if version_option == "中文":
-        BASE_IMAGE_FILENAME = "tier_list.png"
-        RESULT_IMAGE_FILENAME = "final_tier_list.png"
-        SESSION_KEY = "tier_counts_zh"
-    else:
-        BASE_IMAGE_FILENAME = "tier_list_en.png"
-        RESULT_IMAGE_FILENAME = "final_tier_list_en.png"
-        SESSION_KEY = "tier_counts_en"
-
-    BASE_IMAGE_PATH = os.path.join(BASE_DIR, BASE_IMAGE_FILENAME)
-    RESULT_IMAGE_PATH = os.path.join(BASE_DIR, RESULT_IMAGE_FILENAME)
-
-    if SESSION_KEY not in st.session_state:
-        st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
-
-    if st.button("清空目前榜單", type="primary"):
-        if os.path.exists(RESULT_IMAGE_PATH):
-            os.remove(RESULT_IMAGE_PATH)
-        st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
-        st.session_state['current_analysis_data'] = None
-        st.session_state['current_recommend_data'] = None
-        st.success("已重置！")
-        st.rerun()
-
-# ==========================================
-# 3. 核心：指定模型呼叫 (含即時狀態更新)
-# ==========================================
-def call_gemini_advanced(contents):
-    """
-    優先使用 2.5-flash，失敗轉 2.0-flash。
-    會即時更新側邊欄的 status_placeholder。
-    """
-    primary_model = "gemini-2.5-flash"
-    backup_model = "gemini-2.0-flash" 
-
-    # --- 1. 嘗試 Primary (2.5) ---
+def call_ai(contents, model_name):
     try:
-        # 即時顯示：正在嘗試
-        status_placeholder.info(f"🔄 正在連線：{primary_model}...")
-        
-        model = genai.GenerativeModel(primary_model)
+        model = genai.GenerativeModel(model_name)
         response = model.generate_content(contents)
-        
-        # 成功！更新狀態與 Session
-        success_msg = f"gemini-2.5-flash"
-        st.session_state.last_active_model = success_msg
-        status_placeholder.success(f"🚀 當前核心：\n{success_msg}")
-        
         return response.text
-
     except Exception as e:
-        error_msg = str(e)
-        
-        # 如果是 429/404，進入備援流程
-        if "429" in error_msg or "404" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-            # 即時顯示：切換中
-            status_placeholder.warning(f"⚠️ 2.5 忙碌中，切換至備援核心...")
-            time.sleep(1) 
-            
-            # --- 2. 嘗試 Backup (2.0) ---
-            try:
-                status_placeholder.info(f"🔄 正在連線：{backup_model}...")
-                fallback = genai.GenerativeModel(backup_model)
-                response = fallback.generate_content(contents)
-                
-                # 備援成功
-                success_msg = f"gemini-2.0-flash"
-                st.session_state.last_active_model = success_msg
-                status_placeholder.warning(f"🛡️ 當前核心 (備援)：\n{success_msg}")
-                
-                return response.text
-            except Exception as e2:
-                status_placeholder.error("❌ 所有核心連線失敗")
-                st.error(f"❌ 所有模型 (2.5 & 2.0) 皆失敗: {e2}")
-                return None
-        else:
-            status_placeholder.error(f"❌ 呼叫錯誤: {primary_model}")
-            st.error(f"❌ 模型呼叫錯誤 ({primary_model}): {e}")
-            return None
+        # Fallback 機制：如果 Lite 或 2.5 出錯，退回穩定的 2.0 Flash
+        try:
+            print(f"Model {model_name} failed, falling back to 2.0-flash. Error: {e}")
+            fallback = genai.GenerativeModel("models/gemini-2.0-flash")
+            return fallback.generate_content(contents).text
+        except: return None
 
 # ==========================================
-# 4. 功能函式 (搜尋、Agent、繪圖)
+# 4. Agent 團隊
 # ==========================================
 
-def search_google_text(query, mode="analysis"):
-    if not GOOGLE_SEARCH_API_KEY or not SEARCH_ENGINE_ID:
-        st.error("缺少 Google Search API Key")
-        return []
-    
-    search_suffix = "評價 心得" if mode == "analysis" else "推薦 甜涼 好過"
-    url = "https://www.googleapis.com/customsearch/v1"
-    params = {
-        'key': GOOGLE_SEARCH_API_KEY,
-        'cx': SEARCH_ENGINE_ID,
-        'q': f"北科大 {query} {search_suffix}",
-        'num': 8
-    }
-    try:
-        response = requests.get(url, params=params, timeout=10)
-        if response.status_code != 200: return []
-        data = response.json()
-        if 'items' not in data: return []
-        return [f"標題:{i.get('title')} \n内容:{i.get('snippet')}" for i in data['items']]
-    except Exception as e:
-        st.error(f"搜尋錯誤: {e}")
-        return []
-
-# --- Agent 團隊 ---
-
-def agent_data_curator(course_name, raw_data):
-    """Agent 1: 資料清理"""
-    raw_text = "\n---\n".join([r.replace('\n', ' ') for r in raw_data])
-    prompt = f"""
-    你是資料清理專家。查詢目標：「{course_name}」。
-    請過濾掉廣告、無關資訊，只保留關於課程評價、老師教學風格、分數甜度的真實討論。
-    原始資料：{raw_text}
-    請直接輸出摘要：
+def agent_manager(user_query):
     """
-    return call_gemini_advanced(prompt) or raw_text
-
-def agent_senior_analyst(course_name, curated_data):
-    """Agent 2: 首席分析師 (Tier List 用)"""
+    ★ 中央大腦 (Manager Agent) ★
+    判斷使用者意圖，並精確提取「人名」或「關鍵字」
+    """
     prompt = f"""
-    你現在是北科大選課權威。請分析課程「{course_name}」。
-    已過濾評論：{curated_data}
+    使用者輸入：「{user_query}」
     
-    ### 評分標準 (0~100分)：
-    請根據評論的「甜度(給分高低)」、「涼度(作業多寡)」、「推薦程度」綜合評分。
-    - **90-100分 (S級)**：神課、必搶、幾乎全好評。
-    - **80-89分 (A級)**：頂級、推薦、分數不錯。
-    - **70-79分 (B級)**：普通、中規中矩、評價兩極。
-    - **60-69分 (C級)**：無聊、涼但沒用、或分數給得不乾脆。
-    - **0-59分 (D級)**：大刀、快逃、當人、極差。
+    請判斷使用者的意圖，並輸出 JSON：
+    1. 若輸入僅包含「課程名稱」或「類別」(如：微積分, 體育, 甜課) -> 意圖為 "recommend"
+    2. 若輸入包含「特定老師名字」(如：微積分 羅仁傑, 羅仁傑, 廖xx) -> 意圖為 "analyze"
     
-    請務必輸出純 JSON：
+    重點：在 "keywords" 欄位中，如果意圖是 "analyze"，請只提取「老師姓名」本身，不要包含「評價」、「好嗎」等字眼。
+    
+    回傳格式：
     {{
-      "rank": "等級名稱 (e.g. 頂級)", 
-      "tier": "S/A/B/C/D", 
-      "score": 0-100的整數, 
-      "reason": "一句話短評", 
-      "tags": ["標籤1", "標籤2"], 
-      "details": "詳細說明"
+        "intent": "recommend" 或 "analyze",
+        "keywords": "乾淨的搜尋主體 (人名或課名)",
+        "reason": "判斷理由"
     }}
     """
-    return call_gemini_advanced(prompt)
+    res = call_ai(prompt, MODELS["MANAGER"])
+    try:
+        return json.loads(res.replace("```json","").replace("```","").strip())
+    except:
+        return {"intent": "recommend", "keywords": user_query, "reason": "解析失敗，預設推薦"}
 
-def agent_course_recommender(category, raw_data):
-    """Agent 4: 獵頭顧問 (推薦用)"""
-    raw_text = "\n---\n".join(raw_data)
+def search_google(query, mode="analysis"):
+    """
+    ★ 搜尋引擎升級版 ★
+    - Analysis 模式：解鎖 NTUT 限制，同時搜尋校內資訊與廣域 Dcard/PTT 討論。
+    - Recommend 模式：維持鎖定北科大相關討論。
+    """
+    if not GOOGLE_SEARCH_API_KEY: return []
+    
+    # ★★★ 關鍵修改：搜尋策略升級 ★★★
+    if mode == "analysis":
+        # 策略：(北科大 + 老師) OR (老師 + Dcard/PTT)
+        # 不加入「評價」二字，讓搜尋更廣泛
+        q1 = f'"北科大" {query}' 
+        q2 = f'{query} Dcard PTT'
+        final_query = f"({q1}) OR ({q2})"
+    else:
+        # 推薦模式：找北科大範圍內的好課
+        final_query = f"北科大 {query} 推薦 甜涼 好過 (site:dcard.tw OR site:ptt.cc)"
+    
+    print(f"🔍 Executing Search: {final_query}") # Debug 用
+
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {'key': GOOGLE_SEARCH_API_KEY, 'cx': SEARCH_ENGINE_ID, 'q': final_query, 'num': 8}
+    
+    try:
+        res = requests.get(url, params=params, timeout=10)
+        data = res.json()
+        if 'items' not in data: return []
+        results = []
+        for i in data['items']:
+            link = i.get('link', '')
+            src = "PTT" if "ptt.cc" in link else "Dcard" if "dcard.tw" in link else "Official/Web"
+            results.append(f"[{src}] {i.get('title')}\n{i.get('snippet')}")
+        return results
+    except Exception as e:
+        print(f"Search Error: {e}")
+        return []
+
+def agent_data_curator(course_name, raw_data):
+    """Agent 1: 資料清理 (使用 Lite 模型)"""
+    web_context = "\n---\n".join(raw_data)
+    rag_info = retrieve_local_rag(course_name)
+    rag_text = f"\n### 🏫 校內RAG資訊:\n{rag_info}\n" if rag_info else ""
+
     prompt = f"""
-    你是北科大選課推薦顧問。使用者想找「{category}」類別的好課。
-    請閱讀以下搜尋結果，找出評價最好、討論度最高的 3 位老師或課程。
+    你是資料清理專家。查詢目標：「{course_name}」。
+    請去除無關廣告。
     
-    搜尋資料：
-    {raw_text}
+    **重要指令**：
+    1. 若資料包含該老師在「其他學校」(如台科、成大等) 的評價，務必保留，這對評估老師風格至關重要。
+    2. 摘要重點：評分風格、點名頻率、作業量、個性。
     
-    請務必輸出純 JSON 格式的列表：
+    {rag_text}
+    原始資料：{web_context}
+    請直接輸出精簡摘要 (Markdown格式)：
+    """
+    return call_ai(prompt, MODELS["CLEANER"])
+
+def agent_analyst(course_name, curated_data):
+    """Agent 2: 評分分析 (使用 Pro/Flash 高智商模型)"""
+    prompt = f"""
+    你是嚴格的選課分析師。分析目標：「{course_name}」。
+    資料：{curated_data}
+    
+    請進行 0-100 分評級。
+    **注意：請綜合參考該老師在北科大及過往其他學校(若有)的評價。**
+    
+    請輸出 JSON: 
+    {{
+        "rank": "稱號 (e.g. 佛心, 大刀, 札實)", 
+        "tier": "S/A/B/C/D", 
+        "score": 分數(int), 
+        "reason": "一句話短評", 
+        "tags": ["特徵1", "特徵2"], 
+        "details": "詳細說明(若有參考外校評價請特別註明)"
+    }}
+    """
+    return call_ai(prompt, MODELS["JUDGE"])
+
+def agent_recommender(category, raw_data):
+    """Agent 4: 推薦清單 (使用 Lite 模型)"""
+    web_context = "\n---\n".join(raw_data)
+    prompt = f"""
+    使用者想找「{category}」的好課。
+    資料：{web_context}
+    
+    請找出 **最推薦的 3 位** 老師或課程。
+    請輸出 JSON List: 
     [
-      {{
-        "teacher": "老師姓名 (若無則填課程名)",
-        "subject": "具體課程",
-        "reason": "推薦理由",
-        "stars": "推薦指數 (1-5)"
-      }},
-      ... (最多3個)
+        {{"teacher": "老師名", "subject": "課程名", "reason": "推薦理由", "stars": 1-5}}
     ]
     """
-    return call_gemini_advanced(prompt)
+    return call_ai(prompt, MODELS["HUNTER"])
 
-def agent_json_guardrail(raw_response, is_list=False):
-    """Agent 3: 格式審查"""
-    if not raw_response: return None
-    cleaned_text = raw_response.replace("```json", "").replace("```", "").strip()
+def agent_fixer(raw_text, is_list=False):
+    """Agent 3: 格式修復 (使用 Lite 模型)"""
     try:
-        return json.loads(cleaned_text)
+        clean = raw_text.replace("```json","").replace("```","").strip()
+        return json.loads(clean)
     except:
-        prompt = f"你是JSON修復工具。請修正以下錯誤格式並輸出純JSON:\n{raw_response}"
-        res_text = call_gemini_advanced(prompt)
-        if res_text:
-            fixed = res_text.replace("```json", "").replace("```", "").strip()
-            try: return json.loads(fixed)
-            except: return None
-        return None
-
-# --- 圖片處理 ---
-def load_font(size):
-    linux_font = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
-    if os.path.exists(linux_font): return ImageFont.truetype(linux_font, size)
-    mac_font = "/System/Library/Fonts/PingFang.ttc"
-    if os.path.exists(mac_font): return ImageFont.truetype(mac_font, size)
-    return ImageFont.load_default()
-
-def get_fit_font(draw, text, max_width, max_height, initial_size):
-    size = initial_size
-    font = load_font(size)
-    while size > 10: 
-        try:
-            l, t, r, b = draw.textbbox((0, 0), text, font=font)
-            w, h = r - l, b - t
-        except: w, h = draw.textsize(text, font=font)
-        if w < max_width and h < max_height: return font, h
-        size -= 2
-        font = load_font(size)
-    return font, max_height
-
-def create_course_card(full_text, size=(150, 150)):
-    bg_color = (245, 245, 245, 255)
-    border_color = (50, 50, 50, 255)
-    img = Image.new('RGBA', size, bg_color)
-    draw = ImageDraw.Draw(img)
-    draw.rectangle([(0,0), (size[0]-1, size[1]-1)], outline=border_color, width=3)
-    
-    parts = full_text.rsplit(' ', 1)
-    if len(parts) >= 2:
-        course_name, teacher_name = parts[0], parts[1]
-    else:
-        course_name, teacher_name = full_text, ""
-
-    W, H = size
-    PADDING = 8
-    target_w = W - (PADDING * 2)
-    font_course, h_c = get_fit_font(draw, course_name, target_w, H * 0.6, int(H * 0.45))
-    try: l, t, r, b = draw.textbbox((0,0), course_name, font=font_course); w_c = r - l
-    except: w_c, _ = draw.textsize(course_name, font=font_course)
-    draw.text(((W - w_c) / 2, (H * 0.55 - h_c) / 2), course_name, fill=(0, 0, 0), font=font_course)
-    
-    if teacher_name:
-        font_teacher, h_t = get_fit_font(draw, teacher_name, target_w, H * 0.3, int(H * 0.25))
-        try: l, t, r, b = draw.textbbox((0,0), teacher_name, font=font_teacher); w_t = r - l
-        except: w_t, _ = draw.textsize(teacher_name, font=font_teacher)
-        draw.text(((W - w_t) / 2, (H * 0.75) - (h_t / 2)), teacher_name, fill=(80, 80, 80), font=font_teacher)
-    return img
-
-def update_tier_list(course_name, tier_data):
-    tier = tier_data.get('tier', 'C').upper()
-    if tier not in ['S', 'A', 'B', 'C', 'D']: tier = 'C'
-    
-    target_path = RESULT_IMAGE_PATH if os.path.exists(RESULT_IMAGE_PATH) else BASE_IMAGE_PATH
-    if not os.path.exists(target_path): return False
-
-    try: base_img = Image.open(target_path).convert("RGBA")
-    except: 
-        if os.path.exists(BASE_IMAGE_PATH):
-            base_img = Image.open(BASE_IMAGE_PATH).convert("RGBA")
-            st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
-        else: return False
-
-    W, H = base_img.size
-    ROW_H = H / 5  
-    START_X = int(W * 0.28)
-    CARD_SIZE = int(ROW_H * 0.85) 
-    PADDING = 10 
-    card_img = create_course_card(course_name, size=(CARD_SIZE, CARD_SIZE))
-    
-    tier_map = {'S': 0, 'A': 1, 'B': 2, 'C': 3, 'D': 4}
-    row_index = tier_map.get(tier, 3)
-    count = st.session_state[SESSION_KEY][tier]
-    pos_y = int((row_index * ROW_H) + (ROW_H - CARD_SIZE) / 2)
-    pos_x = START_X + (count * (CARD_SIZE + PADDING))
-    
-    if pos_x + CARD_SIZE > W:
-        st.warning(f"{tier} 級已滿！")
-        return False
-
-    base_img.alpha_composite(card_img, (pos_x, pos_y))
-    base_img.save(RESULT_IMAGE_PATH)
-    st.session_state[SESSION_KEY][tier] += 1
-    return True
+        # Lite 模型修復 JSON 也綽綽有餘
+        res = call_ai(f"Return only valid JSON based on this:\n{raw_text}", MODELS["FIXER"])
+        try: return json.loads(res.replace("```json","").replace("```","").strip())
+        except: return None
 
 # ==========================================
-# 5. 網頁主介面
+# 5. UI 與 執行邏輯
 # ==========================================
+st.title("🎓 北科大 AI 選課顧問 (Pro版)")
+st.caption(f"🚀 Powered by {MODELS['MANAGER']} & {MODELS['CLEANER']} | 智能意圖識別 | 廣域搜尋")
 
-st.title("🎓 北科大課程 AI 選課顧問")
-st.markdown("輸入課程名稱，AI 幫你 **分析評價 (0~100分)** 或 **推薦好老師**！")
+if 'analysis_result' not in st.session_state: st.session_state.analysis_result = None
+if 'recommend_result' not in st.session_state: st.session_state.recommend_result = None
 
-# UI 設定
-if 'current_analysis_data' not in st.session_state:
-    st.session_state.current_analysis_data = None
-if 'current_recommend_data' not in st.session_state:
-    st.session_state.current_recommend_data = None
+c1, c2 = st.columns([4, 1])
+with c1: 
+    user_input = st.text_input("想問什麼？", placeholder="輸入「微積分」推薦好課，或「微積分 羅仁傑」分析評價")
+with c2: 
+    btn_search = st.button("🔍 智能搜尋", use_container_width=True, type="primary")
 
-c_input, c_btn1, c_btn2, c_space = st.columns([3, 1, 1, 1], vertical_alignment="bottom")
-
-with c_input:
-    query = st.text_input("輸入關鍵字 (e.g. 體育, 通識, 工數)", placeholder="輸入課程或類別...")
-with c_btn1:
-    btn_analyze = st.button("🔍 分析特定課程", use_container_width=True)
-with c_btn2:
-    btn_recommend = st.button("✨ 幫我推薦老師", use_container_width=True)
-
-# === 邏輯 A: 分析特定課程 ===
-if btn_analyze and query:
+if btn_search and user_input:
     if not GEMINI_API_KEY: st.error("請設定 API Key"); st.stop()
     
-    with st.status("🤖 Agent 團隊啟動中 (分析模式)...", expanded=True) as status:
-        st.write("🔍 [System] Google 搜尋中...")
-        raw_results = search_google_text(query, mode="analysis")
+    # 1. Manager 思考
+    with st.status("🧠 Manager 正在思考您的意圖...", expanded=True) as status:
+        intent_data = agent_manager(user_input)
+        intent = intent_data.get("intent", "recommend")
+        keywords = intent_data.get("keywords", user_input)
         
-        if not raw_results:
-            status.update(label="搜尋失敗", state="error"); st.error("找不到資料")
-        else:
-            with st.expander("📄 查看搜尋原始資料"):
-                for r in raw_results: st.text(r); st.divider()
+        if intent == "analyze":
+            st.info(f"💡 識別意圖：**分析特定老師/課程** (目標：{keywords})")
+            st.write("🔍 啟動廣域搜尋引擎 (校內 + Dcard/PTT 廣域)...")
             
-            st.write("🕵️‍♂️ [Agent 1] 資料過濾中...")
-            curated = agent_data_curator(query, raw_results)
-            with st.expander("📝 查看過濾後摘要"): st.write(curated)
-            
-            st.write("👨‍🏫 [Agent 2] 進行評級 (計算 0-100 分)...")
-            raw_analysis = agent_senior_analyst(query, curated)
-            
-            st.write("🤖 [Agent 3] 格式驗證...")
-            data = agent_json_guardrail(raw_analysis)
-            
-            if data:
-                status.update(label="分析完成！", state="complete")
-                st.session_state.current_analysis_data = data
-                st.session_state.current_recommend_data = None 
-                update_tier_list(query, data)
-            else:
-                status.update(label="失敗", state="error")
+            # 執行分析流程
+            raw_data = search_google(keywords, mode="analysis")
+            if not raw_data:
+                st.warning("找不到相關資料，請檢查老師名字是否正確。")
+                status.update(label="搜尋無結果", state="error")
+                st.stop()
 
-# === 邏輯 B: 推薦好老師 ===
-if btn_recommend and query:
-    if not GEMINI_API_KEY: st.error("請設定 API Key"); st.stop()
-    
-    with st.status("🤖 獵頭顧問啟動中 (推薦模式)...", expanded=True) as status:
-        st.write(f"🔍 [System] 正在搜尋「{query}」相關的高評價課程...")
-        raw_results = search_google_text(query, mode="recommend")
-        
-        if not raw_results:
-            status.update(label="搜尋失敗", state="error"); st.error("找不到資料")
-        else:
-            with st.expander("📄 查看搜尋原始資料"):
-                for r in raw_results: st.text(r); st.divider()
-
-            st.write("🕵️‍♂️ [Agent 4] 獵頭顧問：正在分析討論串並挑選人選...")
-            raw_recs = agent_course_recommender(query, raw_results)
+            st.write(f"🧹 資料清洗 (使用 {MODELS['CLEANER']})...")
+            curated = agent_data_curator(keywords, raw_data)
             
-            st.write("🤖 [Agent 3] 格式驗證...")
-            rec_list = agent_json_guardrail(raw_recs, is_list=True)
+            st.write(f"⚖️ 深度評分 (使用 {MODELS['JUDGE']})...")
+            raw_res = agent_analyst(keywords, curated)
+            final_data = agent_fixer(raw_res)
             
-            if rec_list:
-                status.update(label="推薦清單已生成！", state="complete")
-                st.session_state.current_recommend_data = rec_list
-                st.session_state.current_analysis_data = None 
+            if final_data:
+                st.session_state.analysis_result = final_data
+                st.session_state.recommend_result = None
+                status.update(label="分析完成", state="complete")
             else:
-                status.update(label="失敗", state="error")
+                status.update(label="分析失敗", state="error")
+                
+        else:
+            st.info(f"💡 識別意圖：**推薦好課清單** (目標：{keywords})")
+            st.write("🔍 搜尋北科大熱門課程...")
+            
+            # 執行推薦流程
+            raw_data = search_google(keywords, mode="recommend")
+            st.write(f"🕵️ 獵頭篩選 (使用 {MODELS['HUNTER']})...")
+            raw_res = agent_recommender(keywords, raw_data)
+            final_list = agent_fixer(raw_res, is_list=True)
+            
+            if final_list:
+                st.session_state.recommend_result = final_list
+                st.session_state.analysis_result = None
+                status.update(label="推薦完成", state="complete")
+            else:
+                status.update(label="推薦失敗", state="error")
 
 # === 結果顯示區 ===
 
-if st.session_state.current_recommend_data:
-    st.subheader(f"✨ 「{query}」推薦清單")
-    rec_cols = st.columns(3)
-    for idx, rec in enumerate(st.session_state.current_recommend_data):
-        with rec_cols[idx % 3]:
+# 1. 分析結果
+if st.session_state.analysis_result:
+    d = st.session_state.analysis_result
+    st.divider()
+    
+    c_score, c_info = st.columns([1, 2])
+    with c_score:
+        st.metric("AI 評分", f"{d.get('score')} 分", d.get('tier'))
+        st.markdown(f"### {d.get('rank')}")
+    with c_info:
+        st.success(f"💬 {d.get('reason')}")
+        st.write(d.get('details'))
+        st.write("🏷️ " + " ".join([f"`{t}`" for t in d.get('tags', [])]))
+
+    st.divider()
+    st.subheader("🕸️ 評價關聯圖")
+    g = graphviz.Digraph(attr={'rankdir':'LR', 'bgcolor':'transparent'})
+    g.node(user_input, shape='doublecircle', style='filled', fillcolor='#E1F5FE')
+    g.node(d['tier'], shape='circle', style='filled', fillcolor='#FFF9C4')
+    g.edge(user_input, d['tier'], label=str(d['score']))
+    for t in d.get('tags', []):
+        g.node(t, shape='ellipse', style='filled', fillcolor='#F5F5F5')
+        g.edge(user_input, t)
+    st.graphviz_chart(g)
+
+# 2. 推薦結果
+if st.session_state.recommend_result:
+    st.divider()
+    st.subheader(f"✨ 根據「{user_input}」為您推薦：")
+    cols = st.columns(3)
+    for i, r in enumerate(st.session_state.recommend_result):
+        with cols[i%3]:
             with st.container(border=True):
-                st.markdown(f"### 🏆 {rec.get('teacher', '未知')}")
-                st.caption(f"課程: {rec.get('subject', query)}")
-                st.markdown(f"**推薦指數:** {'⭐' * int(rec.get('stars', 3))}")
-                st.info(rec.get('reason', '無詳細理由'))
-                if st.button(f"分析 {rec.get('teacher')}", key=f"btn_rec_{idx}"):
-                    st.toast(f"請在上方搜尋欄輸入「{rec.get('teacher')}」進行詳細評級！")
-
-elif st.session_state.current_analysis_data:
-    data = st.session_state.current_analysis_data
-    st.divider()
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        st.metric(label="評級", value=f"{data.get('tier')} 級", delta=f"{data.get('score')} 分")
-        st.caption(f"稱號: {data.get('rank')}")
-        st.info(f"💡 {data.get('reason')}")
-    with c2:
-        st.subheader("詳細評價")
-        st.write(data.get('details'))
-
-if os.path.exists(RESULT_IMAGE_PATH):
-    st.divider()
-    st.subheader(f"🏆 課程排位榜單 ({version_option})")
-    import time
-    st.image(RESULT_IMAGE_PATH, caption=f"Tier List ({version_option})", use_column_width=True)
-elif os.path.exists(BASE_IMAGE_PATH):
-    st.divider()
-    st.subheader(f"🏆 課程排位榜單 ({version_option})")
-    st.image(BASE_IMAGE_PATH, caption="Empty List", use_column_width=True)
+                st.markdown(f"### 🏆 {r.get('teacher')}")
+                st.caption(f"課程: {r.get('subject')}")
+                st.write(f"推薦度: {'⭐'*int(r.get('stars', 3))}")
+                st.info(r.get('reason'))
+                if st.button(f"詳細分析 {r.get('teacher')}", key=f"rec_{i}"):
+                     st.info(f"請在搜尋欄輸入「{r.get('teacher')}」進行詳細分析！")
