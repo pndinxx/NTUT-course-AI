@@ -20,7 +20,7 @@ except:
 
 if not GEMINI_API_KEY:
     with st.sidebar:
-        st.warning("⚠️ 請輸入 API Keys")
+        st.warning(" 請輸入 API Keys")
         GEMINI_API_KEY = st.text_input("Gemini API Key", type="password")
         GOOGLE_SEARCH_API_KEY = st.text_input("Google Search Key", type="password")
         SEARCH_ENGINE_ID = st.text_input("Search Engine ID")
@@ -45,7 +45,7 @@ MODELS = {
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 with st.sidebar:
-    st.title("⚙️ 系統核心")
+    st.title(" 系統核心")
     
     # --- 動態狀態顯示區 ---
     st.subheader("📡 即時運算狀態")
@@ -55,12 +55,12 @@ with st.sidebar:
         """動態更新側邊欄狀態"""
         with status_placeholder.container():
             if status == "running":
-                st.info(f"🔄 **{agent_name}** 正在工作中...")
+                st.info(f" **{agent_name}** 正在工作中...")
                 st.caption(f"使用模型: `{model_name}`")
             elif status == "idle":
-                st.success("✅ 系統待機中")
+                st.success("系統待機中")
             elif status == "error":
-                st.error("❌ 發生錯誤")
+                st.error(" 發生錯誤")
 
     # 預設狀態
     update_sidebar_status("System", "Ready", "idle")
@@ -89,7 +89,7 @@ with st.sidebar:
     if SESSION_KEY not in st.session_state:
         st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
-    if st.button("🗑️ 清空榜單", type="primary"):
+    if st.button(" 清空榜單", type="primary"):
         if os.path.exists(RESULT_IMAGE_PATH):
             os.remove(RESULT_IMAGE_PATH)
         st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
@@ -232,8 +232,8 @@ def agent_fixer(text):
 # ==========================================
 # 5. 主介面邏輯 (UI修改重點區)
 # ==========================================
-st.title("🎓 北科大 AI 選課顧問 (Pro版)")
-st.caption("🚀 Agent Workflow + Real-time Visualization")
+st.title(" 北科大 AI 選課顧問 (Pro版)")
+st.caption(" Agent Workflow + Real-time Visualization")
 
 c1, c2 = st.columns([4, 1])
 with c1: user_input = st.text_input("輸入課程/老師...", placeholder="例：微積分 羅仁傑")
@@ -247,18 +247,18 @@ if btn_search and user_input:
     st.session_state.analysis_result = None # 清空舊結果
     
     # === 流程開始 ===
-    with st.status("🚀 任務啟動...", expanded=True) as status:
+    with st.status(" 任務啟動...", expanded=True) as status:
         
         # 1. Manager 階段
         update_sidebar_status("Manager", MODELS["MANAGER"])
-        st.write("🧠 **Manager**: 正在分析您的意圖...")
+        st.write(" **Manager**: 正在分析您的意圖...")
         intent_data = agent_manager(user_input)
         intent = intent_data.get("intent", "recommend")
         keywords = intent_data.get("keywords", user_input)
         
         # [修改] 直接顯示意圖文字，不顯示 JSON
         intent_text = "分析特定老師評價" if intent == "analyze" else "推薦相關課程"
-        st.success(f"✅ 意圖識別：**{intent_text}** (關鍵字：`{keywords}`)")
+        st.success(f" 意圖識別：**{intent_text}** (關鍵字：`{keywords}`)")
         
         if intent == "analyze":
             # 2. Search 階段
@@ -267,12 +267,12 @@ if btn_search and user_input:
             raw_data = search_google(keywords, mode="analysis")
             
             if not raw_data:
-                status.update(label="❌ 搜尋無結果", state="error")
+                status.update(label=" 搜尋無結果", state="error")
                 update_sidebar_status("System", "Error", "error")
                 st.stop()
             
             # 顯示搜尋結果 (保留)
-            with st.expander(f"📄 原始搜尋資料 ({len(raw_data)} 筆)", expanded=False):
+            with st.expander(f" 原始搜尋資料 ({len(raw_data)} 筆)", expanded=False):
                 for item in raw_data:
                     st.text(item)
                     st.divider()
@@ -283,12 +283,12 @@ if btn_search and user_input:
             curated = call_ai(f"摘要重點評價，保留外校資訊：{raw_data}", MODELS["CLEANER"])
             
             # 顯示摘要結果 (保留)
-            with st.expander("📝 資料摘要", expanded=False):
+            with st.expander(" 資料摘要", expanded=False):
                 st.markdown(curated)
 
             # 4. Analyst 階段
             update_sidebar_status("Analyst", MODELS["JUDGE"])
-            st.write("⚖️ **Analyst**: 正在進行深度評分...")
+            st.write(" **Analyst**: 正在進行深度評分...")
             raw_res = agent_analyst(keywords, curated)
             final_data = agent_fixer(raw_res)
             
@@ -299,24 +299,24 @@ if btn_search and user_input:
                 
                 # 5. Illustrator 階段
                 update_sidebar_status("Illustrator", "Pillow (Local)")
-                st.write("🎨 **Illustrator**: 正在繪製 Tier List...")
+                st.write(" **Illustrator**: 正在繪製 Tier List...")
                 update_tier_list_image(user_input, final_data.get('tier', 'C'))
                 
-                status.update(label="✅ 分析完成！", state="complete")
+                status.update(label=" 分析完成！", state="complete")
                 update_sidebar_status("System", "Ready", "idle")
             else:
-                status.update(label="❌ 分析失敗", state="error")
+                status.update(label=" 分析失敗", state="error")
                 update_sidebar_status("System", "Error", "error")
         else:
             # 推薦模式 (簡化版)
             update_sidebar_status("Hunter", MODELS["HUNTER"])
             st.write("🕵️ **Hunter**: 正在搜尋熱門課程...")
             raw_data = search_google(keywords, mode="recommend")
-            with st.expander("📄 搜尋結果"): st.write(raw_data)
+            with st.expander(" 搜尋結果"): st.write(raw_data)
             
             res = call_ai(f"推薦3門課：{raw_data}", MODELS["HUNTER"])
             st.write(res)
-            status.update(label="✅ 推薦完成", state="complete")
+            status.update(label=" 推薦完成", state="complete")
             update_sidebar_status("System", "Ready", "idle")
 
 # ==========================================
@@ -329,7 +329,7 @@ if st.session_state.analysis_result:
     col_res, col_img = st.columns([1.5, 2])
     
     with col_res:
-        st.subheader("📝 分析報告")
+        st.subheader(" 分析報告")
         st.metric("AI 評分", f"{d.get('score')} 分", d.get('tier'))
         st.markdown(f"### {d.get('rank')}")
         st.success(d.get('reason'))
@@ -337,7 +337,7 @@ if st.session_state.analysis_result:
         st.caption("標籤：" + ", ".join(d.get('tags', [])))
         
     with col_img:
-        st.subheader(f"🏆 課程排位榜 ({version_option})")
+        st.subheader(f" 課程排位榜 ({version_option})")
         if os.path.exists(RESULT_IMAGE_PATH):
             st.image(RESULT_IMAGE_PATH, use_column_width=True)
         else:
