@@ -9,7 +9,7 @@ from PIL import Image, ImageDraw, ImageFont
 # ==========================================
 # 0. 設定與 API Keys
 # ==========================================
-st.set_page_config(page_title="北科大 AI 選課顧問 (Gemma 混和版)", layout="wide")
+st.set_page_config(page_title="北科大 AI 課程推薦系統", layout="wide")
 
 try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -20,7 +20,7 @@ except:
 
 if not GEMINI_API_KEY:
     with st.sidebar:
-        st.warning("⚠️ 請輸入 API Keys")
+        st.warning("請輸入 API Keys")
         GEMINI_API_KEY = st.text_input("Gemini API Key", type="password")
         GOOGLE_SEARCH_API_KEY = st.text_input("Google Search Key", type="password")
         SEARCH_ENGINE_ID = st.text_input("Search Engine ID")
@@ -38,7 +38,6 @@ MODELS = {
     # === 評審團 (Expert Panel) ===
     # [修改] Judge A 換成 Gemma 3 27B (嚴格學術派)
     "JUDGE_A":     "models/gemma-3-27b-it",         
-    
     "JUDGE_B":     "models/gemini-2.0-flash",       # 甜涼快樂派 (速度快)
     "JUDGE_C":     "models/gemini-2.5-flash-lite",  # 中立實用派 (輕量)
     
@@ -55,31 +54,31 @@ MODELS = {
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 with st.sidebar:
-    st.title("⚙️ 核心系統")
+    st.title("系統資源")
     
     # --- 動態狀態顯示區 ---
-    st.subheader("📡 即時運算狀態")
+    st.subheader("即時運算狀態")
     status_placeholder = st.empty() 
     
     def update_sidebar_status(agent_name, model_name, status="running"):
         with status_placeholder.container():
             if status == "running":
-                st.info(f"🔄 **{agent_name}** 正在工作中...")
+                st.info(f"**{agent_name}** 正在工作")
                 st.caption(f"Model: `{model_name}`")
             elif status == "idle":
-                st.success("✅ 系統待機中")
+                st.success("系統待機中")
             elif status == "error":
-                st.error("❌ 發生錯誤")
+                st.error("發生錯誤")
 
     update_sidebar_status("System", "Ready", "idle")
     
     st.divider()
     st.caption("評審團架構 (MoE)")
     # [修改] 顯示 Gemma
-    st.markdown("**👨‍🏫 Judge A: 嚴格學術 (Gemma 3 27B)**") 
-    st.text("😎 Judge B: 甜涼快樂 (2.0 Flash)")
-    st.text("🤖 Judge C: 中立客觀 (2.5 Lite)")
-    st.text("⚖️ Synthesizer: 總結決策")
+    st.markdown("Judge A: 嚴格學術 (Gemma 3 27B)**") 
+    st.text("Judge B: 甜涼快樂 (2.0 Flash)")
+    st.text("Judge C: 中立客觀 (2.5 Lite)")
+    st.text("Synthesizer: 總結決策")
 
     st.divider()
     version_option = st.radio("Tier List 版本", ("中文", "英文"), index=0)
@@ -99,7 +98,7 @@ with st.sidebar:
     if SESSION_KEY not in st.session_state:
         st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
 
-    if st.button("🗑️ 清空榜單", type="primary"):
+    if st.button("清空榜單", type="primary"):
         if os.path.exists(RESULT_IMAGE_PATH):
             os.remove(RESULT_IMAGE_PATH)
         st.session_state[SESSION_KEY] = {'S': 0, 'A': 0, 'B': 0, 'C': 0, 'D': 0}
@@ -259,8 +258,8 @@ def agent_judge_panel(course_name, data):
     
     return {
         "A": res_a if res_a else "Gemma 思考過久...",
-        "B": res_b if res_b else "Judge B 離線...",
-        "C": res_c if res_c else "Judge C 離線..."
+        "B": res_b if res_b else "Gemini 2.0 Flash 思考過久...",
+        "C": res_c if res_c else "Gemini 2.5 Flash lite 思考過久..."
     }
 
 def agent_synthesizer(course_name, panel_results):
@@ -269,8 +268,8 @@ def agent_synthesizer(course_name, panel_results):
     以下是三位評審的意見：
     
     👨‍🏫 嚴格學術派 (Gemma 3): {panel_results['A']}
-    😎 甜涼快樂派 (Judge B): {panel_results['B']}
-    🤖 中立助教派 (Judge C): {panel_results['C']}
+    😎 甜涼快樂派 (Gemini 2.0 Flash): {panel_results['B']}
+    🤖 中立助教派 (Gemini 2.5 Flash-Lite): {panel_results['C']}
     
     請綜合這三方的意見，計算出一個「最終加權分數」，並給出最終 Tier (S/A/B/C/D)。
     請務必輸出 JSON 格式：
@@ -293,12 +292,13 @@ def agent_fixer(text):
 # ==========================================
 # 5. 主介面邏輯
 # ==========================================
-st.title("🎓 北科大 AI 選課顧問 (Gemma 混和版)")
-st.caption("🚀 Multi-Agent MoE (Powered by Gemma 3 & Gemini 2.5)")
+st.title("北科大 AI 課程推薦系統")
+st.caption("(Powered by Google AI Studio)")
+st.caption("輸入「課程 老師」「老師」以查找評價，輸入「課程」以查找推薦教師")
 
-c1, c2 = st.columns([4, 1])
+c1, c2 = st.columns([4, 1], vertical_alignment="bottom")
 with c1: user_input = st.text_input("輸入課程/老師...", placeholder="例：微積分 羅仁傑")
-with c2: btn_search = st.button("🔍 智能搜尋", use_container_width=True, type="primary")
+with c2: btn_search = st.button("智能搜尋", use_container_width=True, type="primary")
 
 if 'analysis_result' not in st.session_state: st.session_state.analysis_result = None
 
@@ -306,17 +306,17 @@ if btn_search and user_input:
     if not GEMINI_API_KEY: st.error("缺 API Key"); st.stop()
     st.session_state.analysis_result = None 
     
-    with st.status("🚀 任務啟動...", expanded=True) as status:
+    with st.status("任務啟動...", expanded=True) as status:
         
         # 1. Manager
         update_sidebar_status("Manager", MODELS["MANAGER"])
-        st.write("🧠 **Manager**: 分析意圖...")
+        st.write("**Manager**: 分析意圖...")
         intent_data = agent_manager(user_input)
         intent = intent_data.get("intent", "recommend")
         keywords = intent_data.get("keywords", user_input)
         
         intent_text = "分析特定老師評價" if intent == "analyze" else "推薦相關課程"
-        st.success(f"✅ 意圖：**{intent_text}** (目標：`{keywords}`)")
+        st.success(f"意圖：**{intent_text}** (目標：`{keywords}`)")
         
         if intent == "analyze":
             # 2. Search
@@ -325,17 +325,17 @@ if btn_search and user_input:
             raw_data = search_google(keywords, mode="analysis")
             
             if not raw_data:
-                status.update(label="❌ 無搜尋結果", state="error")
+                status.update(label="無搜尋結果", state="error")
                 st.stop()
             
-            with st.expander(f"📄 原始搜尋資料 ({len(raw_data)} 筆)", expanded=False):
+            with st.expander(f"原始搜尋資料 ({len(raw_data)} 筆)", expanded=False):
                 for item in raw_data:
                     st.text(item)
                     st.divider()
 
             # 3. Cleaner
             update_sidebar_status("Cleaner", MODELS["CLEANER"])
-            st.write("🧹 **Cleaner**: 資料摘要中...")
+            st.write("**Cleaner**: 資料摘要中...")
             curated = call_ai(f"摘要重點評價：{raw_data}", MODELS["CLEANER"])
             
             with st.expander("📝 資料摘要", expanded=False):
@@ -401,7 +401,7 @@ if st.session_state.analysis_result:
         st.caption("標籤：" + ", ".join(d.get('tags', [])))
         
     with col_img:
-        st.subheader(f"🏆 課程排位榜 ({version_option})")
+        st.subheader(f"課程排位榜 ({version_option})")
         if os.path.exists(RESULT_IMAGE_PATH):
             st.image(RESULT_IMAGE_PATH, use_column_width=True)
         else:
