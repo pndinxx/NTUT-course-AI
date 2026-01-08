@@ -240,7 +240,7 @@ def agent_judge_panel(course_name, data):
     
     # 2. Judge B: 甜涼快樂派
     prompt_b = f"""
-    你是【系學會活動長】。評估目標：「{course_name}」。資料：{data}。
+    你是【班上最認真的同學】。評估目標：「{course_name}」。資料：{data}。
     請專注於：給分甜不甜、作業多不多、點名頻率、好不好過。
     請給出你的分數(0-100)與簡短評論 (100字內)。
     """
