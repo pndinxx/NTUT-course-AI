@@ -202,17 +202,46 @@ def call_ai(contents, model_name):
         except: return None
 
 def agent_manager(user_query):
+    """
+    Manager Agent: 負責意圖識別與關鍵字提取
+    """
     prompt = f"""
     使用者輸入：「{user_query}」
-    判斷意圖並輸出 JSON：
-    1. 僅「課程/類別」-> intent: "recommend"
-    2. 含「老師名字」-> intent: "analyze", keywords: "老師名"
-    JSON format: {{"intent": "...", "keywords": "...", "reason": "..."}}
-    """
-    res = call_ai(prompt, MODELS["MANAGER"])
-    try: return json.loads(res.replace("```json","").replace("```","").strip())
-    except: return {"intent": "recommend", "keywords": user_query}
+    
+    請判斷使用者意圖，並輸出標準 JSON 格式：
 
+    1. 【推薦模式】(intent: "recommend")
+       - 觸發條件：輸入僅包含「課程名稱」、「類別」或「通識」(例如：體育, 微積分, 甜課)。
+       - 任務：**keywords 欄位必須填入該課程名稱**。
+    
+    2. 【分析模式】(intent: "analyze")
+       - 觸發條件：輸入包含「特定老師名字」(例如：微積分 羅仁傑, 施坤龍)。
+       - 任務：keywords 欄位只填入「老師本名」(去除課程名與評價字眼)。
+
+    回傳範例：
+    - 輸入"體育" -> {{"intent": "recommend", "keywords": "體育", "reason": "找體育課推薦"}}
+    - 輸入"羅仁傑" -> {{"intent": "analyze", "keywords": "羅仁傑", "reason": "查老師評價"}}
+    
+    JSON format: {{"intent": "recommend" or "analyze", "keywords": "...", "reason": "..."}}
+    """
+    
+    res = call_ai(prompt, MODELS["MANAGER"])
+    
+    try: 
+        data = json.loads(res.replace("```json","").replace("```","").strip())
+        
+        # === [新增] Python 防呆機制 ===
+        # 如果 AI 還是回傳空的 keywords，或是 keywords 長度為 0
+        # 我們直接強制把「使用者原始輸入」當作關鍵字，避免搜尋掛掉
+        if not data.get("keywords") or len(str(data.get("keywords")).strip()) == 0:
+            data["keywords"] = user_query
+            
+        return data
+        
+    except: 
+        # 解析失敗時的最後防線
+        return {"intent": "recommend", "keywords": user_query, "reason": "解析失敗，使用原始輸入"}
+        
 def search_google(query, mode="analysis"):
     if not GOOGLE_SEARCH_API_KEY: return []
     q_str = f'(北科大 "{query}") OR ("{query}" Dcard PTT)' if mode == "analysis" else f'北科大 {query} 推薦 site:dcard.tw OR site:ptt.cc'
