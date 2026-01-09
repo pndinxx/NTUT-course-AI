@@ -29,23 +29,23 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 1. 模型定義 (MoE 架構 - 加入 Gemma)
+# 1. 模型定義 (MoE 架構)
 # ==========================================
 MODELS = {
     "MANAGER":     "models/gemini-2.5-flash",       # 總控
     "CLEANER":     "models/gemini-2.5-flash-lite",  # 資料清理
     
     # === 評審團 (Expert Panel) ===
-    # [修改] Judge A 換成 Gemma 3 27B (嚴格學術派)
-    "JUDGE_A":     "models/gemma-3-27b-it",         
-    "JUDGE_B":     "models/gemini-2.0-flash",       # 甜涼快樂派 (速度快)
-    "JUDGE_C":     "models/gemini-2.5-flash-lite",  # 中立實用派 (輕量)
+    "JUDGE_A":     "models/gemma-3-27b-it",         # 嚴格學術派 (Gemma 3)
+    "JUDGE_B":     "models/gemini-2.0-flash",       # 甜涼快樂派
+    "JUDGE_C":     "models/gemini-2.5-flash-lite",  # 中立實用派
     
     # === 總結者 ===
     "SYNTHESIZER": "models/gemini-2.5-flash",       # 綜合決策
     
+    # === 工具 ===
     "FIXER":       "models/gemini-2.5-flash-lite",
-    "HUNTER":      "models/gemini-2.5-flash"
+    "HUNTER":      "models/gemini-2.5-flash"        # [確認] 獵頭使用 2.5 Flash
 }
 
 # ==========================================
@@ -74,11 +74,13 @@ with st.sidebar:
     
     st.divider()
     st.caption("評審團架構 (MoE)")
-    # [修改] 顯示 Gemma
-    st.markdown("Judge A: 嚴格學術 (Gemma 3 27B)**") 
+    st.text("Judge A: 嚴格學術 (Gemma 3 27B)") 
     st.text("Judge B: 甜涼快樂 (2.0 Flash)")
     st.text("Judge C: 中立客觀 (2.5 Lite)")
     st.text("Synthesizer: 總結決策")
+    st.divider()
+    st.caption("推薦獵頭 (Hunter)")
+    st.text("Hunter: 推薦顧問 (2.5 Flash)") # 顯示 Hunter 資訊
 
     st.divider()
     version_option = st.radio("Tier List 版本", ("中文", "英文"), index=0)
@@ -221,68 +223,54 @@ def search_google(query, mode="analysis"):
         return [f"[{i.get('title')}]\n{i.get('snippet')}\nLink: {i.get('link')}" for i in data.get('items', [])]
     except: return []
 
-# === 評審團機制 (Gemma 3 加入) ===
+# === 評審團機制 ===
 def agent_judge_panel(course_name, data):
-    """
-    Panel of Experts:
-    - A: Gemma 3 27B (Strict)
-    - B: Gemini 2.0 Flash (Chill)
-    - C: Gemini 2.5 Flash-Lite (Neutral)
-    """
+    # 1. Judge A (Gemma 3)
+    prompt_a = f"你是【嚴格學術派教授】。評估「{course_name}」。資料：{data}。專注：紮實度、專業性。請給分(0-100)與簡評。"
     
-    # 1. Judge A (Gemma 3): 嚴格學術派
-    prompt_a = f"""
-    你是【嚴格學術派教授】。評估目標：「{course_name}」。資料：{data}。
-    請專注於：課程紮實度、學得到東西嗎、專業知識含量。
-    請給出你的分數(0-100)與簡短評論 (100字內)。不要客套。
-    """
+    # 2. Judge B
+    prompt_b = f"你是【想輕鬆通過的同學】。評估「{course_name}」。資料：{data}。專注：甜度、好過。請給分(0-100)與簡評。"
     
-    # 2. Judge B: 甜涼快樂派
-    prompt_b = f"""
-    你是【想輕鬆通過課程的同學】。評估目標：「{course_name}」。資料：{data}。
-    請專注於：給分甜不甜、作業多不多、點名頻率、好不好過。
-    請給出你的分數(0-100)與簡短評論 (100字內)。
-    """
+    # 3. Judge C
+    prompt_c = f"你是【中立助教】。評估「{course_name}」。資料：{data}。專注：CP值、綜合評價。請給分(0-100)與簡評。"
     
-    # 3. Judge C: 中立助教派
-    prompt_c = f"""
-    你是【中立助教】。評估目標：「{course_name}」。資料：{data}。
-    請專注於：CP值、綜合評價、老師個性。
-    請給出你的分數(0-100)與簡短評論 (100字內)。
-    """
-    
-    # 依序呼叫
     res_a = call_ai(prompt_a, MODELS["JUDGE_A"])
     res_b = call_ai(prompt_b, MODELS["JUDGE_B"])
     res_c = call_ai(prompt_c, MODELS["JUDGE_C"])
     
     return {
         "A": res_a if res_a else "Gemma 思考過久...",
-        "B": res_b if res_b else "Gemini 2.0 Flash 思考過久...",
-        "C": res_c if res_c else "Gemini 2.5 Flash lite 思考過久..."
+        "B": res_b if res_b else "Judge B 離線...",
+        "C": res_c if res_c else "Judge C 離線..."
     }
 
 def agent_synthesizer(course_name, panel_results):
     prompt = f"""
-    你是最終決策長 (Synthesizer)。目標：「{course_name}」。
-    以下是三位評審的意見：
-    
-    👨‍🏫 嚴格學術派 (Gemma 3): {panel_results['A']}
-    😎 甜涼快樂派 (Gemini 2.0 Flash): {panel_results['B']}
-    🤖 中立助教派 (Gemini 2.5 Flash-Lite): {panel_results['C']}
-    
-    請綜合這三方的意見，計算出一個「最終加權分數」，並給出最終 Tier (S/A/B/C/D)。
-    請務必輸出 JSON 格式：
-    {{
-        "rank": "給老師的一個酷稱號", 
-        "tier": "S/A/B/C/D", 
-        "score": 最終分數(int), 
-        "reason": "綜合短評", 
-        "tags": ["特徵1", "特徵2"], 
-        "details": "詳細的綜合分析報告"
-    }}
+    你是最終決策長。目標：「{course_name}」。
+    意見：A(學術):{panel_results['A']}, B(甜涼):{panel_results['B']}, C(中立):{panel_results['C']}
+    請綜合計算「最終加權分數」並給 Tier。
+    輸出 JSON: {{"rank": "稱號", "tier": "S/A/B/C/D", "score": int, "reason": "...", "tags": [], "details": "..."}}
     """
     return call_ai(prompt, MODELS["SYNTHESIZER"])
+
+# === [新增] Hunter Agent (獨立函式) ===
+def agent_hunter(topic, data):
+    """
+    Hunter: 課程推薦專家
+    """
+    prompt = f"""
+    你是北科大選課獵頭 (Hunter)。
+    使用者想找：「{topic}」。
+    搜尋結果：{data}
+    
+    請推薦 **3 門** 最符合的課程或老師。
+    請用 Markdown 表格呈現，包含：
+    | 課程/老師 | 推薦指數 | 特色短評 |
+    |---|---|---|
+    
+    並在最後給出一個總結建議。
+    """
+    return call_ai(prompt, MODELS["HUNTER"])
 
 def agent_fixer(text):
     res = call_ai(f"Extract valid JSON:\n{text}", MODELS["FIXER"])
@@ -340,10 +328,8 @@ if btn_search and user_input:
             with st.expander("📝 資料摘要", expanded=False):
                 st.markdown(curated)
 
-            # 4. Panel Judges (Gemma 3 Joined)
+            # 4. Panel Judges
             st.write("⚖️ **Panel Judges**: 三位評審正在激烈辯論...")
-            
-            # 顯示 Gemma 狀態
             update_sidebar_status("Judge A (Gemma 3)", MODELS["JUDGE_A"])
             panel_res = agent_judge_panel(keywords, curated)
             
@@ -373,12 +359,20 @@ if btn_search and user_input:
             else:
                 status.update(label="❌ 綜合分析失敗", state="error")
         else:
-            # 推薦模式
+            # === [修改] 推薦模式：呼叫專屬 Hunter Agent ===
             update_sidebar_status("Hunter", MODELS["HUNTER"])
             st.write("🕵️ **Hunter**: 搜尋熱門課程...")
+            
             raw_data = search_google(keywords, mode="recommend")
-            res = call_ai(f"推薦3門課：{raw_data}", MODELS["HUNTER"])
-            st.write(res)
+            with st.expander("📄 搜尋結果", expanded=False):
+                st.write(raw_data)
+            
+            st.write("🕵️ **Hunter**: 正在撰寫推薦報告...")
+            # 呼叫我們剛剛新增的 agent_hunter 函式
+            res = agent_hunter(keywords, raw_data)
+            
+            st.markdown(res)
+            
             status.update(label="✅ 推薦完成", state="complete")
             update_sidebar_status("System", "Ready", "idle")
 
