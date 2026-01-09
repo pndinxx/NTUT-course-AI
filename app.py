@@ -274,11 +274,33 @@ def agent_judge_panel(course_name, data):
     }
 
 def agent_synthesizer(course_name, panel_results):
+    # [新增] 先把評審結果轉成乾淨的字串，避免格式混亂
+    import json
+    panel_text = json.dumps(panel_results, ensure_ascii=False, indent=2)
+
     prompt = f"""
-    你是最終決策長。目標：「{course_name}」。
-    意見：A(學術):{panel_results['A']}, B(甜涼):{panel_results['B']}, C(中立):{panel_results['C']}
-    請綜合計算「最終加權分數」並給 Tier。
-    輸出 JSON: {{"rank": "稱號", "tier": "S/A/B/C/D", "score": int, "reason": "...", "tags": [], "details": "..."}}
+    你是最終決策長 (Synthesizer)。
+    目標：「{course_name}」。
+    
+    以下是三位評審的詳細意見：
+    {panel_text}
+    
+    任務：
+    1. 綜合三方意見，計算一個「最終分數」(0-100)。
+    2. 給予評級 Tier (S/A/B/C/D)。
+    3. 總結出一個短評。
+
+    **極重要：請務必只輸出純 JSON 格式，不要有任何 Markdown (```json) 或其他文字。**
+    
+    JSON 範例：
+    {{
+        "rank": "稱號", 
+        "tier": "A", 
+        "score": 85, 
+        "reason": "雖然作業多但學得到東西", 
+        "tags": ["札實", "偏累"], 
+        "details": "綜合看法..."
+    }}
     """
     return call_ai(prompt, MODELS["SYNTHESIZER"])
 
