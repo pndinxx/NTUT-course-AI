@@ -45,7 +45,7 @@ MODELS = {
     "SYNTHESIZER": "models/gemini-2.5-flash",       # 綜合決策
     
     "FIXER":       "models/gemini-2.5-flash-lite",
-    "HUNTER":      "models/gemini-2.5-flash-lite"
+    "HUNTER":      "models/gemini-2.5-flash"
 }
 
 # ==========================================
@@ -107,7 +107,7 @@ with st.sidebar:
         st.rerun()
 
 # ==========================================
-# 3. 圖片處理 (不變)
+# 3. 圖片處理
 # ==========================================
 def load_font(size):
     paths = ["/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "C:\\Windows\\Fonts\\msjh.ttc", "C:\\Windows\\Fonts\\simhei.ttf"]
@@ -350,9 +350,9 @@ if btn_search and user_input:
             with st.expander("🗣️ 點擊查看評審意見 (Gemma 3 vs Gemini)", expanded=False):
                 st.markdown(f"**👨‍🏫 嚴格學術派 (Gemma 3 27B)**:\n{panel_res['A']}")
                 st.divider()
-                st.markdown(f"**😎 甜涼快樂派 (Judge B)**:\n{panel_res['B']}")
+                st.markdown(f"**😎 甜涼快樂派 (2.0 flash)**:\n{panel_res['B']}")
                 st.divider()
-                st.markdown(f"**🤖 中立助教派 (Judge C)**:\n{panel_res['C']}")
+                st.markdown(f"**🤖 中立助教派 (2.5 flash lite)**:\n{panel_res['C']}")
 
             # 5. Synthesizer
             update_sidebar_status("Synthesizer", MODELS["SYNTHESIZER"])
