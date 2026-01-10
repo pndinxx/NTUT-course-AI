@@ -78,7 +78,7 @@ with st.sidebar:
     update_sidebar_status("System", "Ready", "idle")
     st.divider()
     
-    version_option = st.radio("底圖語言版本", ("中文", "英文"), index=0)
+    version_option = st.radio("tier list語言版本", ("中文", "英文"), index=0)
     CURRENT_LANG = "en" if version_option == "英文" else "zh"
     
     if version_option == "中文":
@@ -264,8 +264,8 @@ def agent_cleaner(course_name, raw_data):
     3. 特別保留「北科課程好朋友」數據。
     強制輸出格式：
     ---
-    ### 來源：[連結標題](連結網址)
-    **原始內文**：
+    來源：[連結標題](連結網址)
+    原始內文：
     (內容)
     ---
     資料：{raw_data}
