@@ -317,7 +317,20 @@ def agent_synthesizer(course_name, panel_results):
     return call_ai(prompt, MODELS["SYNTHESIZER"])
 
 def agent_hunter(topic, data):
-    prompt = f"你是北科大選課獵頭。找：「{topic}」。資料：{data}。推薦 3 門課，並以星星評等表式，給予推薦理由，Markdown 表格。"
+    prompt = f"""
+    你是北科大選課獵頭。使用者想找：「{topic}」。
+    
+    參考資料 (已過濾)：
+    {data}
+    
+    請推薦 **3 門** 最符合需求的課程或老師。
+    
+    請務必使用 **Markdown 表格** 呈現，欄位如下：
+    | 課程/老師 | 星星推薦指數 | 核心推薦理由 |
+    |---|---|---|
+    
+    (請在表格下方補充一段總結建議)
+    """
     return call_ai(prompt, MODELS["HUNTER"])
 
 def agent_fixer(text):
