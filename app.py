@@ -4,6 +4,7 @@ import requests
 import json
 import time
 import google.generativeai as genai
+from tavily import TavilyClient
 from PIL import Image, ImageDraw, ImageFont
 
 # ==========================================
@@ -15,6 +16,7 @@ try:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
     GOOGLE_SEARCH_API_KEY = st.secrets["GOOGLE_SEARCH_API_KEY"]
     SEARCH_ENGINE_ID = st.secrets["SEARCH_ENGINE_ID"]
+    TAVILY_API_KEY = st.secrets("TAVILY_API_KEY")
 except:
     GEMINI_API_KEY = None; GOOGLE_SEARCH_API_KEY = None; SEARCH_ENGINE_ID = None
 
@@ -24,7 +26,7 @@ if not GEMINI_API_KEY:
         GEMINI_API_KEY = st.text_input("Gemini API Key", type="password")
         GOOGLE_SEARCH_API_KEY = st.text_input("Google Search Key", type="password")
         SEARCH_ENGINE_ID = st.text_input("Search Engine ID")
-
+        TAVILY_API_KEY = st.text_input("Tavily API Key", type="password")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
@@ -220,15 +222,55 @@ def agent_manager(user_query):
         return data
     except: return {"intent": "recommend", "keywords": user_query}
 
-def search_google(query, mode="analysis"):
-    if not GOOGLE_SEARCH_API_KEY: return []
-    q_str = f'(北科大 "{query}") OR ("{query}" Dcard PTT)' if mode == "analysis" else f'北科大 {query} 推薦 site:dcard.tw OR site:ptt.cc'
-    url = "https://www.googleapis.com/customsearch/v1"
-    try:
-        res = requests.get(url, params={'key': GOOGLE_SEARCH_API_KEY, 'cx': SEARCH_ENGINE_ID, 'q': q_str, 'num': 8}, timeout=10)
-        data = res.json()
-        return [f"[{i.get('title')}]\n{i.get('snippet')}\nLink: {i.get('link')}" for i in data.get('items', [])]
-    except: return []
+def search_hybrid(query, mode="analysis"):
+    """
+    混合搜尋引擎：同時使用 Google (廣度) 與 Tavily (深度/抗擋)
+    """
+    results = []
+    
+    # --- 1. Google Search (廣度搜尋) ---
+    if GOOGLE_SEARCH_API_KEY and SEARCH_ENGINE_ID:
+        try:
+            # 根據模式調整關鍵字
+            q_str = f'(北科大 "{query}") OR ("{query}" Dcard PTT)' if mode == "analysis" else f'北科大 {query} 推薦'
+            url = "https://www.googleapis.com/customsearch/v1"
+            params = {'key': GOOGLE_SEARCH_API_KEY, 'cx': SEARCH_ENGINE_ID, 'q': q_str, 'num': 5} # Google 抓 5 筆
+            
+            res = requests.get(url, params=params, timeout=5)
+            if res.status_code == 200:
+                for item in res.json().get('items', []):
+                    # 格式化 Google 結果
+                    results.append(f"[Google] {item.get('title')}\n{item.get('snippet')}\nLink: {item.get('link')}")
+        except Exception as e:
+            print(f"Google Search Error: {e}")
+
+    # --- 2. Tavily Search (深度/抗擋搜尋) ---
+    if TAVILY_API_KEY:
+        try:
+            tavily = TavilyClient(api_key=TAVILY_API_KEY)
+            # Tavily 的 search_depth="advanced" 可以爬得更深
+            # max_results=5 (Tavily 再抓 5 筆)
+            tav_res = tavily.search(query=f"北科大 {query} 評價 Dcard PTT", search_depth="advanced", max_results=5)
+            
+            for item in tav_res.get('results', []):
+                # Tavily 的 content 通常比 Google snippet 更豐富
+                content = item.get('content', '')[:300] # 截取前300字避免太長
+                results.append(f"[Tavily] {item.get('title')}\n{content}\nLink: {item.get('url')}")
+        except Exception as e:
+            print(f"Tavily Search Error: {e}")
+
+    # 如果兩邊都沒結果
+    if not results:
+        return []
+        
+    # 去除重複 (簡單用 Link 當 key)
+    unique_results = {}
+    for r in results:
+        link = r.split("Link: ")[-1].strip()
+        if link not in unique_results:
+            unique_results[link] = r
+            
+    return list(unique_results.values())
         
 def agent_cleaner(course_name, raw_data):
     """資料清理專員 (僅過濾雜訊，保留原始文案與連結)"""
@@ -371,7 +413,7 @@ if btn_search and user_input:
             # 2. Search
             update_sidebar_status("Search Engine", "Google API")
             st.write(f"**Search**: 廣域搜尋中...")
-            raw_data = search_google(keywords, mode="analysis")
+            raw_data = search_hybrid(keywords, mode="analysis")
             if not raw_data: st.stop()
             
             with st.expander(f"原始搜尋資料 ({len(raw_data)} 筆)", expanded=False):
@@ -433,7 +475,7 @@ if btn_search and user_input:
             # 推薦模式
             update_sidebar_status("Hunter", MODELS["HUNTER"])
             st.write("**Hunter**: 搜尋熱門課程...")
-            raw_data = search_google(keywords, mode="recommend")
+            raw_data = search_hybrid(keywords, mode="recommend")
             with st.expander(" 搜尋結果", expanded=False):
                 st.write(raw_data)
             
