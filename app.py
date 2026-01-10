@@ -42,14 +42,14 @@ if GEMINI_API_KEY:
 # ==========================================
 MODELS = {
     "MANAGER":        "models/gemini-2.5-flash",
-    "CLEANER":        "models/gemini-2.5-flash-lite",
+    "CLEANER":        "models/gemini-2.5-flash",
     
     # === 嚴格學術派 (Role A) ===
     "JUDGE_A_Gemma":  "models/gemma-3-27b-it",
     "JUDGE_A_Gemini": "models/gemini-2.5-flash",
     
     # === 甜涼快樂派 (Role B) ===
-    "JUDGE_B_Gemma":  "models/gemma-3-27b-it",  # Gemma 也來扮演快樂學生
+    "JUDGE_B_Gemma":  "models/gemma-3-27b-it",
     "JUDGE_B_Gemini": "models/gemini-2.5-flash",
     
     "SYNTHESIZER":    "models/gemini-2.5-flash",
