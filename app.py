@@ -416,25 +416,33 @@ if btn_search and user_input:
                 status.update(label="綜合分析失敗", state="error")
         else:
             # === 推薦模式 (Hunter Mode) ===
-            update_sidebar_status("Hunter", MODELS["HUNTER"])
-            st.write("**Hunter**: 搜尋熱門課程...")
             
-            # 1. 搜尋 (Search)
+            # 1. 搜尋 (Search) - 由 search_hybrid 負責
+            update_sidebar_status("Search Engine", "Hybrid")
+            st.write("**Hunter**: 搜尋熱門課程...")
             raw_data = search_hybrid(keywords, mode="recommend")
             
+            # 顯示原始搜尋結果 (小字體)
             with st.expander(" 原始搜尋結果", expanded=False):
                 for item in raw_data:
                     st.markdown(f'<div style="font-size: 13px; line-height: 1.4; white-space: pre-wrap;">{item}</div>', unsafe_allow_html=True)
                     st.divider()
             
-            # 2. 清理 (Cleaner) -> 關鍵修改：Hunter 現在也用 Cleaner 了
+            # 2. 整理 (Cleaner) - 由 agent_cleaner 負責
+            update_sidebar_status("Cleaner", MODELS["CLEANER"])
             st.write("**Cleaner**: 正在過濾雜訊...")
-            curated = agent_cleaner(keywords, raw_data)
+            curated_data = agent_cleaner(keywords, raw_data)
             
-            # 3. 推薦 (Hunter)
+            # (選擇性) 顯示清理後的資料摘要，讓使用者知道 Cleaner 做了什麼
+            with st.expander(" 資料摘要 (已過濾)", expanded=False):
+                st.markdown(curated_data)
+            
+            # 3. 推薦 (Hunter) - 接收清理後的資料
+            update_sidebar_status("Hunter", MODELS["HUNTER"])
             st.write("**Hunter**: 正在撰寫推薦報告...")
-            # 這裡傳入的是 curated (清理後的資料)，而不是 raw_data
-            res = agent_hunter(keywords, curated)
+            
+            # 關鍵：將 curated_data (乾淨資料) 餵給 Hunter
+            res = agent_hunter(keywords, curated_data)
             
             st.markdown(res)
             
