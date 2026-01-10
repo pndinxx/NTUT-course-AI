@@ -293,8 +293,8 @@ def agent_synthesizer(course_name, panel_results):
     {panel_text}
     
     任務：
-    1. 綜合雙方意見 (嚴格 vs 輕鬆)，計算一個「最終分數」(0-100)。
-    2. 給予評級 Tier (S/A/B/C/D)。
+    1. 綜合雙方意見 (嚴格 vs 輕鬆)，給予評級 Tier (S/A/B/C/D)。
+    2. 給予包含課程內涵(學不學得到東西)、課程輕鬆程度、甜度，以★★★★★表示 滿分為五顆星。
     3. 總結出一個短評。
 
     **極重要：請務必只輸出純 JSON 格式，不要有任何 Markdown (```json) 或其他文字。**
@@ -303,7 +303,6 @@ def agent_synthesizer(course_name, panel_results):
     {{
         "rank": "稱號", 
         "tier": "A", 
-        "score": 85, 
         "reason": "雖然作業多但學得到東西", 
         "tags": ["札實", "偏累"], 
         "details": "綜合看法..."
