@@ -518,10 +518,14 @@ if st.session_state.analysis_result:
         
         stars = d.get('star_ratings', {})
         if stars:
-            c1, c2, c3 = st.columns(3)
-            c1.metric("內涵", stars.get('learning', 'N/A'))
-            c2.metric("輕鬆", stars.get('chill', 'N/A'))
-            c3.metric("甜度", stars.get('sweet', 'N/A'))
+            st.markdown("---") # 上分隔線
+            
+            # 使用三個獨立的 write，保證絕對分行
+            st.write(f"📚 **課程內涵**：{stars.get('learning', 'N/A')}")
+            st.write(f"😎 **輕鬆程度**：{stars.get('chill', 'N/A')}")
+            st.write(f"🍭 **分數甜度**：{stars.get('sweet', 'N/A')}")
+            
+            st.markdown("---") # 下分隔線
         
         st.success(d.get('reason'))
         st.write(d.get('details'))
