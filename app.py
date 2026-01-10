@@ -39,11 +39,13 @@ if GEMINI_API_KEY:
 # ==========================================
 MODELS = {
     "MANAGER":        "models/gemini-2.5-flash",
-    "CLEANER":        "models/gemini-2.5-flash-lite",
+    "CLEANER":        "models/gemini-2.5-flash",
+    
     "JUDGE_A_Gemma":  "models/gemma-3-27b-it",
     "JUDGE_A_Gemini": "models/gemini-2.5-flash",
     "JUDGE_B_Gemma":  "models/gemma-3-27b-it",
     "JUDGE_B_Gemini": "models/gemini-2.5-flash",
+    
     "SYNTHESIZER":    "models/gemini-2.5-flash",
     "FIXER":          "models/gemini-2.5-flash-lite",
     "HUNTER":         "models/gemini-2.5-flash"
@@ -315,7 +317,7 @@ def agent_synthesizer(course_name, panel_results):
     return call_ai(prompt, MODELS["SYNTHESIZER"])
 
 def agent_hunter(topic, data):
-    prompt = f"你是北科大選課獵頭。找：「{topic}」。資料：{data}。推薦 3 門課，Markdown 表格。"
+    prompt = f"你是北科大選課獵頭。找：「{topic}」。資料：{data}。推薦 3 門課，並以星星評等表式，給予推薦理由，Markdown 表格。"
     return call_ai(prompt, MODELS["HUNTER"])
 
 def agent_fixer(text):
