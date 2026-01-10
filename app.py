@@ -29,7 +29,7 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 1. 模型定義 (MoE 架構)
+# 1. 模型定義 (MoE 架構 - 雙模型對決)
 # ==========================================
 MODELS = {
     "MANAGER":     "models/gemini-2.5-flash",       # 總控
@@ -37,15 +37,15 @@ MODELS = {
     
     # === 評審團 (Expert Panel) ===
     "JUDGE_A":     "models/gemma-3-27b-it",         # 嚴格學術派 (Gemma 3)
-    "JUDGE_B":     "models/gemini-2.0-flash",       # 甜涼快樂派
-    "JUDGE_C":     "models/gemini-2.5-flash-lite",  # 中立實用派
+    "JUDGE_B":     "models/gemini-2.5-flash",       # 甜涼快樂派 (Gemini 2.0)
+    # [移除] Judge C
     
     # === 總結者 ===
     "SYNTHESIZER": "models/gemini-2.5-flash",       # 綜合決策
     
     # === 工具 ===
     "FIXER":       "models/gemini-2.5-flash-lite",
-    "HUNTER":      "models/gemini-2.5-flash"        # [確認] 獵頭使用 2.5 Flash
+    "HUNTER":      "models/gemini-2.5-flash"
 }
 
 # ==========================================
@@ -73,14 +73,14 @@ with st.sidebar:
     update_sidebar_status("System", "Ready", "idle")
     
     st.divider()
-    st.caption("評審團架構 (MoE)")
-    st.text("Judge A: 嚴格學術 (Gemma 3 27B)") 
-    st.text("Judge B: 甜涼快樂 (2.0 Flash)")
-    st.text("Judge C: 中立客觀 (2.5 Lite)")
+    st.caption("評審團架構 (Gemma vs Gemini)")
+    st.text("Judge A: 嚴格學術 (Gemma 3)") 
+    st.text("Judge B: 甜涼快樂 (Gemini 2.0)")
     st.text("Synthesizer: 總結決策")
+    
     st.divider()
     st.caption("推薦獵頭 (Hunter)")
-    st.text("Hunter: 推薦顧問 (2.5 Flash)") # 顯示 Hunter 資訊
+    st.text("Hunter: 推薦顧問 (2.5 Flash)")
 
     st.divider()
     version_option = st.radio("Tier List 版本", ("中文", "英文"), index=0)
@@ -230,16 +230,13 @@ def agent_manager(user_query):
     try: 
         data = json.loads(res.replace("```json","").replace("```","").strip())
         
-        # === [新增] Python 防呆機制 ===
-        # 如果 AI 還是回傳空的 keywords，或是 keywords 長度為 0
-        # 我們直接強制把「使用者原始輸入」當作關鍵字，避免搜尋掛掉
+        # Python 防呆機制
         if not data.get("keywords") or len(str(data.get("keywords")).strip()) == 0:
             data["keywords"] = user_query
             
         return data
         
     except: 
-        # 解析失敗時的最後防線
         return {"intent": "recommend", "keywords": user_query, "reason": "解析失敗，使用原始輸入"}
         
 def search_google(query, mode="analysis"):
@@ -252,29 +249,39 @@ def search_google(query, mode="analysis"):
         return [f"[{i.get('title')}]\n{i.get('snippet')}\nLink: {i.get('link')}" for i in data.get('items', [])]
     except: return []
 
-# === 評審團機制 ===
+# === 評審團機制 (刪除 Judge C) ===
 def agent_judge_panel(course_name, data):
-    # 1. Judge A (Gemma 3)
-    prompt_a = f"你是【嚴格學術派教授】。評估「{course_name}」。資料：{data}。專注：紮實度、專業性。請給分(0-100)與簡評。"
+    """
+    Panel of Experts:
+    - A: Gemma 3 27B (Strict)
+    - B: Gemini 2.0 Flash (Chill)
+    """
     
-    # 2. Judge B
-    prompt_b = f"你是【想輕鬆通過的同學】。評估「{course_name}」。資料：{data}。專注：甜度、好過。請給分(0-100)與簡評。"
+    # 1. Judge A (Gemma 3): 嚴格學術派
+    prompt_a = f"""
+    你是【嚴格學術派教授】。評估目標：「{course_name}」。資料：{data}。
+    請專注於：課程紮實度、學得到東西嗎、專業知識含量。
+    請給出你的分數(0-100)與簡短評論 (100字內)。不要客套。
+    """
     
-    # 3. Judge C
-    prompt_c = f"你是【中立助教】。評估「{course_name}」。資料：{data}。專注：CP值、綜合評價。請給分(0-100)與簡評。"
+    # 2. Judge B: 甜涼快樂派
+    prompt_b = f"""
+    你是【想輕鬆通過課程的同學】。評估目標：「{course_name}」。資料：{data}。
+    請專注於：給分甜不甜、作業多不多、點名頻率、好不好過。
+    請給出你的分數(0-100)與簡短評論 (100字內)。
+    """
     
+    # 依序呼叫
     res_a = call_ai(prompt_a, MODELS["JUDGE_A"])
     res_b = call_ai(prompt_b, MODELS["JUDGE_B"])
-    res_c = call_ai(prompt_c, MODELS["JUDGE_C"])
     
     return {
         "A": res_a if res_a else "Gemma 思考過久...",
-        "B": res_b if res_b else "Judge B 離線...",
-        "C": res_c if res_c else "Judge C 離線..."
+        "B": res_b if res_b else "Judge B 離線..."
     }
 
 def agent_synthesizer(course_name, panel_results):
-    # [新增] 先把評審結果轉成乾淨的字串，避免格式混亂
+    # 先把評審結果轉成乾淨的字串
     import json
     panel_text = json.dumps(panel_results, ensure_ascii=False, indent=2)
 
@@ -282,11 +289,11 @@ def agent_synthesizer(course_name, panel_results):
     你是最終決策長 (Synthesizer)。
     目標：「{course_name}」。
     
-    以下是三位評審的詳細意見：
+    以下是兩位評審的詳細意見：
     {panel_text}
     
     任務：
-    1. 綜合三方意見，計算一個「最終分數」(0-100)。
+    1. 綜合雙方意見 (嚴格 vs 輕鬆)，計算一個「最終分數」(0-100)。
     2. 給予評級 Tier (S/A/B/C/D)。
     3. 總結出一個短評。
 
@@ -304,7 +311,7 @@ def agent_synthesizer(course_name, panel_results):
     """
     return call_ai(prompt, MODELS["SYNTHESIZER"])
 
-# === [新增] Hunter Agent (獨立函式) ===
+# === Hunter Agent ===
 def agent_hunter(topic, data):
     """
     Hunter: 課程推薦專家
@@ -381,8 +388,8 @@ if btn_search and user_input:
             with st.expander("📝 資料摘要", expanded=False):
                 st.markdown(curated)
 
-            # 4. Panel Judges
-            st.write("⚖️ **Panel Judges**: 三位評審正在激烈辯論...")
+            # 4. Panel Judges (A vs B)
+            st.write("⚖️ **Panel Judges**: 雙方評審正在激烈辯論...")
             update_sidebar_status("Judge A (Gemma 3)", MODELS["JUDGE_A"])
             panel_res = agent_judge_panel(keywords, curated)
             
@@ -390,9 +397,7 @@ if btn_search and user_input:
                 st.markdown(f"**👨‍🏫 嚴格學術派 (Gemma 3 27B)**:\n{panel_res['A']}")
                 st.divider()
                 st.markdown(f"**😎 甜涼快樂派 (2.0 flash)**:\n{panel_res['B']}")
-                st.divider()
-                st.markdown(f"**🤖 中立助教派 (2.5 flash lite)**:\n{panel_res['C']}")
-
+                
             # 5. Synthesizer
             update_sidebar_status("Synthesizer", MODELS["SYNTHESIZER"])
             st.write("🏆 **Synthesizer**: 正在統整最終判決...")
@@ -412,7 +417,7 @@ if btn_search and user_input:
             else:
                 status.update(label="❌ 綜合分析失敗", state="error")
         else:
-            # === [修改] 推薦模式：呼叫專屬 Hunter Agent ===
+            # === 推薦模式 ===
             update_sidebar_status("Hunter", MODELS["HUNTER"])
             st.write("🕵️ **Hunter**: 搜尋熱門課程...")
             
@@ -421,7 +426,6 @@ if btn_search and user_input:
                 st.write(raw_data)
             
             st.write("🕵️ **Hunter**: 正在撰寫推薦報告...")
-            # 呼叫我們剛剛新增的 agent_hunter 函式
             res = agent_hunter(keywords, raw_data)
             
             st.markdown(res)
