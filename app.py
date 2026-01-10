@@ -304,6 +304,7 @@ def agent_synthesizer(course_name, panel_results):
         "rank": "稱號", 
         "tier": "A", 
         "reason": "雖然作業多但學得到東西", 
+        "stars": "課程內涵★★★★★ \n 輕鬆程度★★★★★ \n 甜度★★★★★",
         "tags": ["札實", "偏累"], 
         "details": "綜合看法..."
     }}
