@@ -371,8 +371,7 @@ if btn_search and user_input:
             
             with st.expander(f"原始搜尋資料 ({len(raw_data)} 筆)", expanded=False):
                 for item in raw_data:
-                    # [修改] 使用 HTML div 搭配 font-size: 13px 來縮小字體
-                    st.markdown(f'<div style="font-size: 13px; line-height: 1.4; white-space: pre-wrap;">{item}</div>', unsafe_allow_html=True)
+                    st.text(item)
                     st.divider()
 
             update_sidebar_status("Cleaner", MODELS["CLEANER"])
@@ -425,7 +424,7 @@ if btn_search and user_input:
             # 顯示原始搜尋結果 (小字體)
             with st.expander(" 原始搜尋結果", expanded=False):
                 for item in raw_data:
-                    st.markdown(f'<div style="font-size: 13px; line-height: 1.4; white-space: pre-wrap;">{item}</div>', unsafe_allow_html=True)
+                    st.text(item)
                     st.divider()
             
             # 2. 整理 (Cleaner) - 由 agent_cleaner 負責
