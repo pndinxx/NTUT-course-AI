@@ -373,9 +373,9 @@ def agent_synthesizer(course_name, panel_results):
         "tier": "B", 
         "score": 75,
         "star_ratings": {{
-            "learning": "★★★★★",
-            "chill": "★★☆☆☆",
-            "sweet": "★★☆☆☆"
+            "learning": "★★★★★" \n,
+            "chill": "★★☆☆☆" \n,
+            "sweet": "★★☆☆☆" \n
         }},
         "reason": "學得到很多但非常累，想混分勿選", 
         "tags": ["紮實", "大刀"], 
