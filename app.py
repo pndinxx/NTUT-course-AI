@@ -229,7 +229,28 @@ def search_google(query, mode="analysis"):
         data = res.json()
         return [f"[{i.get('title')}]\n{i.get('snippet')}\nLink: {i.get('link')}" for i in data.get('items', [])]
     except: return []
-
+        
+def agent_cleaner(course_name, raw_data):
+    """資料清理專員"""
+    prompt = f"""
+    你是資料清理專家。查詢目標：「{course_name}」。
+    請去除無關廣告、重複內容、與課程或目標教師無關的雜訊。
+    
+    保留資料：
+    1. 評分方式 (甜不甜、給分大方嗎)
+    2. 作業量與考試難度
+    3. 退選率
+    4. 老師個性與教學風格
+    
+    如果包含外校 (Dcard/PTT) 的評價、留言，請務必保留，並標註來源。
+    
+    資料：
+    {raw_data}
+    
+    請輸出精簡但資訊量豐富的摘要 (Markdown格式)。
+    """
+    return call_ai(prompt, MODELS["CLEANER"])
+    
 def agent_judge_panel(course_name, data):
     """
     4 Judges: 
