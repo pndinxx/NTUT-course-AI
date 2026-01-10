@@ -86,12 +86,11 @@ with st.sidebar:
 
     BASE_IMAGE_PATH = os.path.join(BASE_DIR, BASE_IMAGE_FILENAME)
 
-    if "tier_counts" not in st.session_state:
+    if "tier_counts" not in st.session_state or "zh" not in st.session_state.tier_counts:
         st.session_state.tier_counts = {
             "zh": { "A": {'S':0,'A':0,'B':0,'C':0,'D':0}, "B": {'S':0,'A':0,'B':0,'C':0,'D':0}, "Total": {'S':0,'A':0,'B':0,'C':0,'D':0} },
             "en": { "A": {'S':0,'A':0,'B':0,'C':0,'D':0}, "B": {'S':0,'A':0,'B':0,'C':0,'D':0}, "Total": {'S':0,'A':0,'B':0,'C':0,'D':0} }
         }
-
     if st.button("清空所有榜單", type="primary"):
         for lang in ["zh", "en"]:
             for l_type in ["A", "B", "Total"]:
