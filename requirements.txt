@@ -3,4 +3,4 @@ google-generativeai
 streamlit
 requests
 Pillow
-graphviz
+tavily-python
