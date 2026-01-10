@@ -310,12 +310,12 @@ def agent_judge_panel(course_name, data):
     請評分並給予 Tier (S/A/B/C/D)。
     **務必輸出純 JSON 格式**：{{ "tier": "S", "score": 95, "comment": "簡短評語" }}
     """
-
+    
     # A: 嚴格學術派
     prompt_a = f"你是【嚴格學術派教授】。專注：紮實度、專業性。{base_prompt}"
     
     # B: 甜涼快樂派
-    prompt_b = f"你是【想輕鬆通過的同學】。專注：甜度、好過。{base_prompt}"
+    prompt_b = f"你是【想輕鬆通過的同學】。專注：甜度、好過(退選率大於10%代表很高 很多人不想修)。{base_prompt}"
     
     # 呼叫 4 個模型
     # A Group
