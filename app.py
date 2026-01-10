@@ -347,13 +347,14 @@ def agent_judge_panel(course_name, data):
 
 def agent_synthesizer(course_name, panel_results):
     import json
+    # 將評審結果轉為字串
     panel_text = json.dumps(panel_results, ensure_ascii=False, indent=2)
 
     prompt = f"""
     你是最終決策長 (Synthesizer)。
     目標：「{course_name}」。
     
-    以下是四位評審的詳細意見 (嚴格派x2, 甜涼派x2)：
+    以下是四位評審的詳細意見：
     {panel_text}
     
     任務：
