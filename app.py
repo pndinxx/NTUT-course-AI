@@ -12,9 +12,12 @@ from PIL import Image, ImageDraw, ImageFont
 # ==========================================
 st.set_page_config(page_title="北科大 AI 課程推薦系統", layout="wide")
 
+# 改良後的寫法
 def get_secret(key):
+    # 嘗試從 st.secrets 讀取，失敗則回傳 None
     if key in st.secrets:
         return st.secrets[key]
+    # (可選) 嘗試從環境變數讀取 (適合部署在 Render/Heroku 等平台)
     if os.getenv(key):
         return os.getenv(key)
     return None
@@ -35,15 +38,20 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 1. 模型定義
+# 1. 模型定義 (MoE 架構 - 交叉比對版)
 # ==========================================
 MODELS = {
     "MANAGER":        "models/gemini-2.5-flash",
-    "CLEANER":        "models/gemini-2.5-flash-lite",
+    "CLEANER":        "models/gemini-2.5-flash",
+    
+    # === 嚴格學術派 (Role A) ===
     "JUDGE_A_Gemma":  "models/gemma-3-27b-it",
     "JUDGE_A_Gemini": "models/gemini-2.5-flash",
+    
+    # === 甜涼快樂派 (Role B) ===
     "JUDGE_B_Gemma":  "models/gemma-3-27b-it",
     "JUDGE_B_Gemini": "models/gemini-2.5-flash",
+    
     "SYNTHESIZER":    "models/gemini-2.5-flash",
     "FIXER":          "models/gemini-2.5-flash-lite",
     "HUNTER":         "models/gemini-2.5-flash"
@@ -54,11 +62,11 @@ MODELS = {
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# [修改] 這裡定義不同語言版本的檔案後綴
-# 例如中文版用 final_tier_list.png，英文版用 final_tier_list_en.png
-def get_tier_filename(list_type, lang="zh"):
-    suffix = "_en" if lang == "en" else ""
-    return f"tier_list_{list_type}{suffix}.png" if list_type != "Total" else f"final_tier_list{suffix}.png"
+TIER_FILES = {
+    "A": "tier_list_A.png",       # 嚴格派榜單
+    "B": "tier_list_B.png",       # 甜涼派榜單
+    "Total": "final_tier_list.png" # 綜合榜單
+}
 
 with st.sidebar:
     st.title("系統資源")
@@ -79,8 +87,6 @@ with st.sidebar:
     st.divider()
     
     version_option = st.radio("底圖語言版本", ("中文", "英文"), index=0)
-    # [修改] 設定語言代碼
-    CURRENT_LANG = "en" if version_option == "英文" else "zh"
     
     if version_option == "中文":
         BASE_IMAGE_FILENAME = "tier_list.png"
@@ -89,22 +95,18 @@ with st.sidebar:
 
     BASE_IMAGE_PATH = os.path.join(BASE_DIR, BASE_IMAGE_FILENAME)
 
-    # 計數器需要區分語言，避免中英文混在一起算
-    # 結構: tier_counts[lang][list_type][tier]
     if "tier_counts" not in st.session_state:
         st.session_state.tier_counts = {
-            "zh": { "A": {'S':0,'A':0,'B':0,'C':0,'D':0}, "B": {'S':0,'A':0,'B':0,'C':0,'D':0}, "Total": {'S':0,'A':0,'B':0,'C':0,'D':0} },
-            "en": { "A": {'S':0,'A':0,'B':0,'C':0,'D':0}, "B": {'S':0,'A':0,'B':0,'C':0,'D':0}, "Total": {'S':0,'A':0,'B':0,'C':0,'D':0} }
+            "A": {'S':0, 'A':0, 'B':0, 'C':0, 'D':0},
+            "B": {'S':0, 'A':0, 'B':0, 'C':0, 'D':0},
+            "Total": {'S':0, 'A':0, 'B':0, 'C':0, 'D':0}
         }
 
     if st.button("清空所有榜單", type="primary"):
-        # 清空所有可能的檔案
-        for lang in ["zh", "en"]:
-            for l_type in ["A", "B", "Total"]:
-                fname = get_tier_filename(l_type, lang)
-                path = os.path.join(BASE_DIR, fname)
-                if os.path.exists(path): os.remove(path)
-                st.session_state.tier_counts[lang][l_type] = {'S':0,'A':0,'B':0,'C':0,'D':0}
+        for key, fname in TIER_FILES.items():
+            path = os.path.join(BASE_DIR, fname)
+            if os.path.exists(path): os.remove(path)
+            st.session_state.tier_counts[key] = {'S':0, 'A':0, 'B':0, 'C':0, 'D':0}
             
         st.session_state.analysis_result = None
         st.session_state.judge_results = None
@@ -168,20 +170,15 @@ def create_course_card(full_text, size=(150, 150)):
         draw.text(((W-w_t)/2, (H*0.75)-(h_t/2)), teacher_name, fill='gray', font=font_t)
     return img
 
-def update_tier_list_image(list_type, course_name, tier, lang="zh"):
+def update_tier_list_image(list_type, course_name, tier):
     tier = tier.upper()
     if tier not in ['S', 'A', 'B', 'C', 'D']: tier = 'C'
     
-    # [修改] 根據語言取得正確檔名
-    target_filename = get_tier_filename(list_type, lang)
+    target_filename = TIER_FILES.get(list_type, "final_tier_list.png")
     target_path = os.path.join(BASE_DIR, target_filename)
     
-    # [修改] 根據語言取得正確底圖
-    current_base_img_name = "tier_list.png" if lang == "zh" else "tier_list_en.png"
-    current_base_img_path = os.path.join(BASE_DIR, current_base_img_name)
-
     if os.path.exists(target_path): base = Image.open(target_path).convert("RGBA")
-    elif os.path.exists(current_base_img_path): base = Image.open(current_base_img_path).convert("RGBA")
+    elif os.path.exists(BASE_IMAGE_PATH): base = Image.open(BASE_IMAGE_PATH).convert("RGBA")
     else: base = create_base_tier_list_fallback().convert("RGBA")
     
     W, H = base.size
@@ -190,8 +187,7 @@ def update_tier_list_image(list_type, course_name, tier, lang="zh"):
     START_X = int(W * 0.28)
     PADDING = 10
     
-    # [修改] 從正確的語言計數器讀取
-    count = st.session_state.tier_counts[lang][list_type][tier]
+    count = st.session_state.tier_counts[list_type][tier]
     x = START_X + (count * (CARD_SIZE + PADDING))
     y = int(({'S':0,'A':1,'B':2,'C':3,'D':4}[tier] * ROW_H) + (ROW_H - CARD_SIZE)/2)
     
@@ -201,12 +197,11 @@ def update_tier_list_image(list_type, course_name, tier, lang="zh"):
     base.alpha_composite(card, (int(x), int(y)))
     base.save(target_path)
     
-    # [修改] 更新計數
-    st.session_state.tier_counts[lang][list_type][tier] += 1
+    st.session_state.tier_counts[list_type][tier] += 1
     return True
 
 # ==========================================
-# 4. Agent 邏輯 (保持不變)
+# 4. Agent 邏輯
 # ==========================================
 def call_ai(contents, model_name):
     try:
@@ -235,63 +230,107 @@ def agent_manager(user_query):
     except: return {"intent": "recommend", "keywords": user_query}
 
 def search_hybrid(query, mode="analysis"):
+    """
+    混合搜尋引擎：同時使用 Google (廣度) 與 Tavily (深度/抗擋)
+    """
     results = []
+    
+    # --- 1. Google Search (廣度搜尋) ---
     if GOOGLE_SEARCH_API_KEY and SEARCH_ENGINE_ID:
         try:
+            # 根據模式調整關鍵字
             q_str = f'(北科大 "{query}") OR ("{query}" Dcard PTT)' if mode == "analysis" else f'北科大 {query} 推薦'
             url = "https://www.googleapis.com/customsearch/v1"
-            params = {'key': GOOGLE_SEARCH_API_KEY, 'cx': SEARCH_ENGINE_ID, 'q': q_str, 'num': 5}
+            params = {'key': GOOGLE_SEARCH_API_KEY, 'cx': SEARCH_ENGINE_ID, 'q': q_str, 'num': 5} # Google 抓 5 筆
+            
             res = requests.get(url, params=params, timeout=5)
             if res.status_code == 200:
                 for item in res.json().get('items', []):
+                    # 格式化 Google 結果
                     results.append(f"[Google] {item.get('title')}\n{item.get('snippet')}\nLink: {item.get('link')}")
-        except Exception as e: print(f"Google Error: {e}")
+        except Exception as e:
+            print(f"Google Search Error: {e}")
 
+    # --- 2. Tavily Search (深度/抗擋搜尋) ---
     if TAVILY_API_KEY:
         try:
             tavily = TavilyClient(api_key=TAVILY_API_KEY)
+            # Tavily 的 search_depth="advanced" 可以爬得更深
+            # max_results=5 (Tavily 再抓 5 筆)
             tav_res = tavily.search(query=f"北科大 {query} 評價 Dcard PTT", search_depth="advanced", max_results=5)
+            
             for item in tav_res.get('results', []):
-                content = item.get('content', '')[:300]
+                # Tavily 的 content 通常比 Google snippet 更豐富
+                content = item.get('content', '')[:300] # 截取前300字避免太長
                 results.append(f"[Tavily] {item.get('title')}\n{content}\nLink: {item.get('url')}")
-        except Exception as e: print(f"Tavily Error: {e}")
+        except Exception as e:
+            print(f"Tavily Search Error: {e}")
 
-    if not results: return []
+    # 如果兩邊都沒結果
+    if not results:
+        return []
+        
+    # 去除重複 (簡單用 Link 當 key)
     unique_results = {}
     for r in results:
         link = r.split("Link: ")[-1].strip()
-        if link not in unique_results: unique_results[link] = r
+        if link not in unique_results:
+            unique_results[link] = r
+            
     return list(unique_results.values())
         
 def agent_cleaner(course_name, raw_data):
+    """資料清理專員 (強制格式版)"""
     prompt = f"""
     你是資料過濾專家。查詢目標：「{course_name}」。
-    任務：過濾雜訊，保留北科大/教學相關完整資料。
-    規則：
-    1. 完整保留原文，不摘要。
-    2. 刪除無關雜訊(廣告/導航)。
-    3. 特別保留「北科課程好朋友」數據。
-    強制輸出格式：
+    
+    你的任務是**過濾雜訊**，只保留有關「北科大」或「教學」有關的完整資料。
+    
+    【執行規則】：
+    1. **完整保留原文**：請找出資料中與「{course_name}」相關資訊，將符合目標的網址內容**一字不改**地複製下來。**絕對不要進行總結、改寫或條列式摘要**。
+    2. **刪除雜訊**：只刪除錯誤、與「{course_name}」不相符、沒有北科大或教師相關的網站（例如：網站導航列、廣告代碼、無關的其他文章標題、亂碼）。
+    3. **特別保留**：若資料來自「北科課程好朋友」，請保留所有的數據。
+    
+    【強制輸出格式】：
+    請務必對每一則留下的資料遵守以下 Markdown 格式，不要輸出任何額外的開場白：
+
     ---
     ### 來源：[連結標題](連結網址)
     **原始內文**：
-    (內容)
+    (這裡請直接貼上原始內容，保持原本的換行與排版)
     ---
-    資料：{raw_data}
+
+    原始資料：
+    {raw_data}
+
+    請開始輸出整理後的內容：
     """
     return call_ai(prompt, MODELS["CLEANER"])
     
 def agent_judge_panel(course_name, data):
+    """
+    4 Judges: 
+    - Strict (A): Gemma 3, Gemini 2.5
+    - Chill (B): Gemma 3, Gemini 2.5
+    """
     base_prompt = f"""
     目標：「{course_name}」。資料：{data}。
     請評分並給予 Tier (S/A/B/C/D)。
     **務必輸出純 JSON 格式**：{{ "tier": "S", "score": 95, "comment": "簡短評語" }}
     """
-    prompt_a = f"你是【嚴格學術派教授】。專注：紮實度、專業性。{base_prompt}"
-    prompt_b = f"你是【想輕鬆通過的同學】。專注：甜度、好過。{base_prompt}"
     
+    # A: 嚴格學術派
+    prompt_a = f"你是【嚴格學術派教授】。專注：紮實度、專業性。{base_prompt}"
+    
+    # B: 甜涼快樂派
+    prompt_b = f"你是【想輕鬆通過的同學】。專注：甜度、好過(退選率大於10%代表很高 很多人不想修)。{base_prompt}"
+    
+    # 呼叫 4 個模型
+    # A Group
     res_a_gemma = call_ai(prompt_a, MODELS["JUDGE_A_Gemma"])
     res_a_gemini = call_ai(prompt_a, MODELS["JUDGE_A_Gemini"])
+    
+    # B Group
     res_b_gemma = call_ai(prompt_b, MODELS["JUDGE_B_Gemma"])
     res_b_gemini = call_ai(prompt_b, MODELS["JUDGE_B_Gemini"])
     
@@ -308,25 +347,48 @@ def agent_judge_panel(course_name, data):
 
 def agent_synthesizer(course_name, panel_results):
     import json
+    # 將評審結果轉為字串
     panel_text = json.dumps(panel_results, ensure_ascii=False, indent=2)
+
     prompt = f"""
-    你是最終決策長 (Synthesizer)。目標：「{course_name}」。
-    意見：{panel_text}
+    你是最終決策長 (Synthesizer)。
+    目標：「{course_name}」。
+    
+    以下是四位評審的詳細意見：
+    {panel_text}
+    
     任務：
-    1. 計算最終分數與 Tier。
-    2. 新增星星評等 (內涵/輕鬆/甜度)。
+    1. 綜合意見計算「最終分數」(0-100) 與 Tier (S/A/B/C/D)。
+    2. **新增三項維度的星星評等** (滿分5顆星，請用符號 ★/☆ 表示，例如 ★★★★☆)：
+       - **內涵 (Learning)**: 課程深度、學不學得到東西？
+       - **輕鬆 (Chill)**: 作業考試多寡、是否好過？(越涼星星越多)
+       - **甜度 (Sweet)**: 給分大方程度？(越高分星星越多)
     3. 總結短評。
+
+    **極重要：請務必只輸出純 JSON 格式，不要有任何 Markdown (```json) 或其他文字。**
+    
     JSON 範例：
     {{
-        "rank": "硬核大刀", "tier": "B", "score": 75,
-        "star_ratings": {{ "learning": "★★★★★", "chill": "★★☆☆☆", "sweet": "★★☆☆☆" }},
-        "reason": "...", "tags": [], "details": "..."
+        "rank": "硬核大刀", 
+        "tier": "B", 
+        "score": 75,
+        "star_ratings": {{
+            "learning": "★★★★★",
+            "chill": "★★☆☆☆",
+            "sweet": "★★☆☆☆"
+        }},
+        "reason": "學得到很多但非常累，想混分勿選", 
+        "tags": ["紮實", "大刀"], 
+        "details": "詳細分析..."
     }}
     """
     return call_ai(prompt, MODELS["SYNTHESIZER"])
 
 def agent_hunter(topic, data):
-    prompt = f"你是北科大選課獵頭。找：「{topic}」。資料：{data}。推薦 3 門課，Markdown 表格。"
+    prompt = f"""
+    你是北科大選課獵頭。使用者想找：「{topic}」。搜尋結果：{data}。
+    請推薦 3 門課，用 Markdown 表格呈現。
+    """
     return call_ai(prompt, MODELS["HUNTER"])
 
 def agent_fixer(text):
@@ -353,28 +415,39 @@ if btn_search and user_input:
     st.session_state.judge_results = None
     
     with st.status("任務啟動...", expanded=True) as status:
+        
+        # 1. Manager
         update_sidebar_status("Manager", MODELS["MANAGER"])
+        st.write("**Manager**: 分析意圖...")
         intent_data = agent_manager(user_input)
         intent = intent_data.get("intent", "recommend")
         keywords = intent_data.get("keywords", user_input)
         st.success(f"意圖：**{intent}** (目標：`{keywords}`)")
         
         if intent == "analyze":
-            update_sidebar_status("Search Engine", "Hybrid")
+            # 2. Search
+            update_sidebar_status("Search Engine", "Google API")
             st.write(f"**Search**: 廣域搜尋中...")
             raw_data = search_hybrid(keywords, mode="analysis")
             if not raw_data: st.stop()
             
             with st.expander(f"原始搜尋資料 ({len(raw_data)} 筆)", expanded=False):
-                for item in raw_data: st.text(item); st.divider()
+                for item in raw_data:
+                    st.text(item)
+                    st.divider()
 
+            # 3. Cleaner
             update_sidebar_status("Cleaner", MODELS["CLEANER"])
             st.write("**Cleaner**: 資料摘要中...")
-            curated = agent_cleaner(keywords, raw_data)
-            with st.expander("資料摘要", expanded=False): st.markdown(curated)
+            curated = call_ai(f"摘要重點評價：{raw_data}", MODELS["CLEANER"])
+            
+            with st.expander("資料摘要", expanded=False):
+                st.markdown(curated)
 
+            # 4. Panel Judges
             st.write("**Panel Judges**: 四方會談 (Gemma vs Gemini)...")
             update_sidebar_status("Judges (x4)", "Multi-Model")
+            
             panel_res = agent_judge_panel(keywords, curated)
             st.session_state.judge_results = panel_res
             
@@ -389,6 +462,7 @@ if btn_search and user_input:
                     st.warning(f"**Gemma 3**: {panel_res['B_Gemma']['score']}分\n{panel_res['B_Gemma']['comment']}")
                     st.warning(f"**Gemini 2.5**: {panel_res['B_Gemini']['score']}分\n{panel_res['B_Gemini']['comment']}")
 
+            # 5. Synthesizer
             update_sidebar_status("Synthesizer", MODELS["SYNTHESIZER"])
             st.write("**Synthesizer**: 正在統整最終判決...")
             final_raw = agent_synthesizer(keywords, panel_res)
@@ -396,34 +470,44 @@ if btn_search and user_input:
             
             if final_data:
                 st.session_state.analysis_result = final_data
+                
+                # 6. Illustrator
                 update_sidebar_status("Illustrator", "Local")
                 st.write("**Illustrator**: 更新三張榜單...")
                 
-                # [修改] 傳入 CURRENT_LANG 參數
-                update_tier_list_image("A", user_input, panel_res['A_Gemini'].get('tier', 'C'), lang=CURRENT_LANG)
-                update_tier_list_image("B", user_input, panel_res['B_Gemini'].get('tier', 'C'), lang=CURRENT_LANG)
-                update_tier_list_image("Total", user_input, final_data.get('tier', 'C'), lang=CURRENT_LANG)
+                # [策略] 為了穩定性，榜單 A 採用 Gemini 2.5 (A_Gemini) 的判斷
+                update_tier_list_image("A", user_input, panel_res['A_Gemini'].get('tier', 'C'))
+                # [策略] 榜單 B 採用 Gemini 2.5 (B_Gemini) 的判斷
+                update_tier_list_image("B", user_input, panel_res['B_Gemini'].get('tier', 'C'))
+                # 綜合榜單
+                update_tier_list_image("Total", user_input, final_data.get('tier', 'C'))
                 
                 status.update(label="評審完成！", state="complete")
                 update_sidebar_status("System", "Ready", "idle")
             else:
                 status.update(label="綜合分析失敗", state="error")
         else:
+            # 推薦模式
             update_sidebar_status("Hunter", MODELS["HUNTER"])
             st.write("**Hunter**: 搜尋熱門課程...")
             raw_data = search_hybrid(keywords, mode="recommend")
-            with st.expander(" 搜尋結果", expanded=False): st.write(raw_data)
+            with st.expander(" 搜尋結果", expanded=False):
+                st.write(raw_data)
+            
             st.write("**Hunter**: 正在撰寫推薦報告...")
             res = agent_hunter(keywords, raw_data)
             st.markdown(res)
+            
             status.update(label="推薦完成", state="complete")
             update_sidebar_status("System", "Ready", "idle")
 
 # ==========================================
-# 6. 結果顯示區
+# 6. 結果顯示區 (支援多頁籤)
 # ==========================================
 if st.session_state.analysis_result:
     d = st.session_state.analysis_result
+    judges = st.session_state.judge_results
+    
     st.divider()
     col_res, col_img = st.columns([1.5, 2])
     
@@ -431,36 +515,41 @@ if st.session_state.analysis_result:
         st.subheader("最終決策報告")
         st.metric("綜合評分", f"{d.get('score')} 分", d.get('tier'))
         st.markdown(f"### {d.get('rank')}")
+        
         stars = d.get('star_ratings', {})
         if stars:
-            st.markdown("---")
-            st.write(f" **課程內涵**：{stars.get('learning', 'N/A')}")
-            st.write(f" **輕鬆程度**：{stars.get('chill', 'N/A')}")
-            st.write(f" **分數甜度**：{stars.get('sweet', 'N/A')}")
-            st.markdown("---")
+            st.markdown("---") # 上分隔線
+            
+            # 使用三個獨立的 write，保證絕對分行
+            st.write(f"📚 **課程內涵**：{stars.get('learning', 'N/A')}")
+            st.write(f"😎 **輕鬆程度**：{stars.get('chill', 'N/A')}")
+            st.write(f"🍭 **分數甜度**：{stars.get('sweet', 'N/A')}")
+            
+            st.markdown("---") # 下分隔線
+        
         st.success(d.get('reason'))
         st.write(d.get('details'))
         st.caption("標籤：" + ", ".join(d.get('tags', [])))
 
     with col_img:
+        # 使用 Tabs 切換三張榜單
         tab_total, tab_a, tab_b = st.tabs(["綜合榜單", "嚴格派榜單", "甜涼派榜單"])
         
-        # [修改] show_tier_img 函式需根據當前語言找檔案
-        def show_tier_img(l_type):
-            fname = get_tier_filename(l_type, CURRENT_LANG)
+        def show_tier_img(fname):
             path = os.path.join(BASE_DIR, fname)
             if os.path.exists(path):
                 st.image(path, use_column_width=True)
             else:
-                # 若找不到該語言的圖，嘗試找預設中文底圖
                 st.image(BASE_IMAGE_PATH, caption="尚無資料", use_column_width=True)
         
         with tab_total:
             st.caption("Synthesizer 綜合決策")
-            show_tier_img("Total")
+            show_tier_img(TIER_FILES["Total"])
+            
         with tab_a:
-            st.caption("嚴格學術派")
-            show_tier_img("A")
+            st.caption("嚴格學術派 (以 Gemini 2.5 觀點為主)")
+            show_tier_img(TIER_FILES["A"])
+            
         with tab_b:
-            st.caption("甜涼快樂派")
-            show_tier_img("B")
+            st.caption("甜涼快樂派 (以 Gemini 2.5 觀點為主)")
+            show_tier_img(TIER_FILES["B"])
