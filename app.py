@@ -29,16 +29,23 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # ==========================================
-# 1. 模型定義 (MoE 架構)
+# 1. 模型定義 (MoE 架構 - 交叉比對版)
 # ==========================================
 MODELS = {
-    "MANAGER":     "models/gemini-2.5-flash",
-    "CLEANER":     "models/gemini-2.5-flash-lite",
-    "JUDGE_A":     "models/gemma-3-27b-it",         # 嚴格派
-    "JUDGE_B":     "models/gemini-2.0-flash",       # 甜涼派
-    "SYNTHESIZER": "models/gemini-2.5-flash",       # 綜合
-    "FIXER":       "models/gemini-2.5-flash-lite",
-    "HUNTER":      "models/gemini-2.5-flash"
+    "MANAGER":        "models/gemini-2.5-flash",
+    "CLEANER":        "models/gemini-2.5-flash-lite",
+    
+    # === 嚴格學術派 (Role A) ===
+    "JUDGE_A_Gemma":  "models/gemma-3-27b-it",
+    "JUDGE_A_Gemini": "models/gemini-2.5-flash",
+    
+    # === 甜涼快樂派 (Role B) ===
+    "JUDGE_B_Gemma":  "models/gemma-3-27b-it",  # Gemma 也來扮演快樂學生
+    "JUDGE_B_Gemini": "models/gemini-2.5-flash",
+    
+    "SYNTHESIZER":    "models/gemini-2.5-flash",
+    "FIXER":          "models/gemini-2.5-flash-lite",
+    "HUNTER":         "models/gemini-2.5-flash"
 }
 
 # ==========================================
@@ -46,7 +53,6 @@ MODELS = {
 # ==========================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 定義三張榜單的檔案名稱
 TIER_FILES = {
     "A": "tier_list_A.png",       # 嚴格派榜單
     "B": "tier_list_B.png",       # 甜涼派榜單
@@ -76,11 +82,10 @@ with st.sidebar:
     if version_option == "中文":
         BASE_IMAGE_FILENAME = "tier_list.png"
     else:
-        BASE_IMAGE_FILENAME = "tier_list_en.png" # 需準備英文底圖，或共用
+        BASE_IMAGE_FILENAME = "tier_list_en.png"
 
     BASE_IMAGE_PATH = os.path.join(BASE_DIR, BASE_IMAGE_FILENAME)
 
-    # 初始化三個榜單的計數器
     if "tier_counts" not in st.session_state:
         st.session_state.tier_counts = {
             "A": {'S':0, 'A':0, 'B':0, 'C':0, 'D':0},
@@ -92,16 +97,15 @@ with st.sidebar:
         for key, fname in TIER_FILES.items():
             path = os.path.join(BASE_DIR, fname)
             if os.path.exists(path): os.remove(path)
-            # 重置計數
             st.session_state.tier_counts[key] = {'S':0, 'A':0, 'B':0, 'C':0, 'D':0}
             
         st.session_state.analysis_result = None
-        st.session_state.judge_results = None # 新增：存 Judge 個別結果
+        st.session_state.judge_results = None
         st.success("已重置所有榜單")
         st.rerun()
 
 # ==========================================
-# 3. 圖片處理 (支援多榜單)
+# 3. 圖片處理
 # ==========================================
 def load_font(size):
     paths = ["/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "C:\\Windows\\Fonts\\msjh.ttc", "C:\\Windows\\Fonts\\simhei.ttf"]
@@ -158,16 +162,12 @@ def create_course_card(full_text, size=(150, 150)):
     return img
 
 def update_tier_list_image(list_type, course_name, tier):
-    """
-    list_type: "A" (嚴格), "B" (甜涼), "Total" (綜合)
-    """
     tier = tier.upper()
     if tier not in ['S', 'A', 'B', 'C', 'D']: tier = 'C'
     
     target_filename = TIER_FILES.get(list_type, "final_tier_list.png")
     target_path = os.path.join(BASE_DIR, target_filename)
     
-    # 優先讀取已經存在的該類型榜單，若無則讀底圖
     if os.path.exists(target_path): base = Image.open(target_path).convert("RGBA")
     elif os.path.exists(BASE_IMAGE_PATH): base = Image.open(BASE_IMAGE_PATH).convert("RGBA")
     else: base = create_base_tier_list_fallback().convert("RGBA")
@@ -178,9 +178,7 @@ def update_tier_list_image(list_type, course_name, tier):
     START_X = int(W * 0.28)
     PADDING = 10
     
-    # 讀取對應榜單的計數
     count = st.session_state.tier_counts[list_type][tier]
-    
     x = START_X + (count * (CARD_SIZE + PADDING))
     y = int(({'S':0,'A':1,'B':2,'C':3,'D':4}[tier] * ROW_H) + (ROW_H - CARD_SIZE)/2)
     
@@ -190,7 +188,6 @@ def update_tier_list_image(list_type, course_name, tier):
     base.alpha_composite(card, (int(x), int(y)))
     base.save(target_path)
     
-    # 更新計數
     st.session_state.tier_counts[list_type][tier] += 1
     return True
 
@@ -235,73 +232,84 @@ def search_google(query, mode="analysis"):
 
 def agent_judge_panel(course_name, data):
     """
-    Panel of Experts:
-    [修改] 現在 Judge 也必須回傳 JSON，包含 Tier，以便繪製個別榜單
+    4 Judges: 
+    - Strict (A): Gemma 3, Gemini 2.5
+    - Chill (B): Gemma 3, Gemini 2.5
     """
-    
     base_prompt = f"""
     目標：「{course_name}」。資料：{data}。
     請評分並給予 Tier (S/A/B/C/D)。
-    
-    **務必輸出純 JSON 格式**：
-    {{ "tier": "S", "score": 95, "comment": "簡短評語" }}
+    **務必輸出純 JSON 格式**：{{ "tier": "S", "score": 95, "comment": "簡短評語" }}
     """
 
-    # 1. Judge A (Gemma 3): 嚴格學術派
-    prompt_a = f"""
-    你是【嚴格學術派教授】。專注：紮實度、專業性。
-    {base_prompt}
-    """
+    # A: 嚴格學術派
+    prompt_a = f"你是【嚴格學術派教授】。專注：紮實度、專業性。{base_prompt}"
     
-    # 2. Judge B: 甜涼快樂派
-    prompt_b = f"""
-    你是【想輕鬆通過的同學】。專注：甜度、好過。
-    {base_prompt}
-    """
+    # B: 甜涼快樂派
+    prompt_b = f"你是【想輕鬆通過的同學】。專注：甜度、好過。{base_prompt}"
     
-    res_a_raw = call_ai(prompt_a, MODELS["JUDGE_A"])
-    res_b_raw = call_ai(prompt_b, MODELS["JUDGE_B"])
+    # 呼叫 4 個模型
+    # A Group
+    res_a_gemma = call_ai(prompt_a, MODELS["JUDGE_A_Gemma"])
+    res_a_gemini = call_ai(prompt_a, MODELS["JUDGE_A_Gemini"])
     
-    # 嘗試解析 JSON，如果失敗則給預設值
+    # B Group
+    res_b_gemma = call_ai(prompt_b, MODELS["JUDGE_B_Gemma"])
+    res_b_gemini = call_ai(prompt_b, MODELS["JUDGE_B_Gemini"])
+    
     def parse_judge(raw_text):
         try: return json.loads(raw_text.replace("```json","").replace("```","").strip())
-        except: return {"tier": "C", "score": 70, "comment": raw_text} # Fallback
+        except: return {"tier": "C", "score": 70, "comment": str(raw_text)[:100]}
 
-    json_a = parse_judge(res_a_raw)
-    json_b = parse_judge(res_b_raw)
-    
     return {
-        "A": json_a,
-        "B": json_b
+        "A_Gemma": parse_judge(res_a_gemma),
+        "A_Gemini": parse_judge(res_a_gemini),
+        "B_Gemma": parse_judge(res_b_gemma),
+        "B_Gemini": parse_judge(res_b_gemini)
     }
 
 def agent_synthesizer(course_name, panel_results):
-    # 傳入完整的 JSON 物件讓 Synthesizer 參考
+    # 使用原本您指定的包含星星評等的 Prompt 標準
     import json
     panel_text = json.dumps(panel_results, ensure_ascii=False, indent=2)
 
     prompt = f"""
-    你是最終決策長。目標：「{course_name}」。
-    評審意見：
+    你是最終決策長 (Synthesizer)。
+    目標：「{course_name}」。
+    
+    以下是四位評審的詳細意見 (嚴格派x2, 甜涼派x2)：
     {panel_text}
     
     任務：
-    1. 綜合計算最終分數與 Tier。
-    2. 新增星星評等 (Learning/Chill/Sweet)。
-    3. 輸出純 JSON。
+    1. 綜合意見計算「最終分數」(0-100) 與 Tier (S/A/B/C/D)。
+    2. **新增三項維度的星星評等** (滿分5顆星，請用符號 ★/☆ 表示，例如 ★★★★☆)：
+       - **內涵 (Learning)**: 課程深度、學不學得到東西？
+       - **輕鬆 (Chill)**: 作業考試多寡、是否好過？(越涼星星越多)
+       - **甜度 (Sweet)**: 給分大方程度？(越高分星星越多)
+    3. 總結短評。
+
+    **極重要：請務必只輸出純 JSON 格式，不要有任何 Markdown (```json) 或其他文字。**
     
     JSON 範例：
     {{
-        "rank": "稱號", "tier": "A", "score": 85,
-        "star_ratings": {{ "learning": "★★★★★", "chill": "★★☆☆☆", "sweet": "★★☆☆☆" }},
-        "reason": "...", "tags": [], "details": "..."
+        "rank": "硬核大刀", 
+        "tier": "B", 
+        "score": 75,
+        "star_ratings": {{
+            "learning": "★★★★★",
+            "chill": "★★☆☆☆",
+            "sweet": "★★☆☆☆"
+        }},
+        "reason": "學得到很多但非常累，想混分勿選", 
+        "tags": ["紮實", "大刀"], 
+        "details": "詳細分析..."
     }}
     """
     return call_ai(prompt, MODELS["SYNTHESIZER"])
 
 def agent_hunter(topic, data):
     prompt = f"""
-    你是選課獵頭。使用者想找：「{topic}」。搜尋結果：{data}。
+    你是北科大選課獵頭。使用者想找：「{topic}」。搜尋結果：{data}。
     請推薦 3 門課，用 Markdown 表格呈現。
     """
     return call_ai(prompt, MODELS["HUNTER"])
@@ -346,19 +354,37 @@ if btn_search and user_input:
             raw_data = search_google(keywords, mode="analysis")
             if not raw_data: st.stop()
             
+            with st.expander(f"原始搜尋資料 ({len(raw_data)} 筆)", expanded=False):
+                for item in raw_data:
+                    st.text(item)
+                    st.divider()
+
             # 3. Cleaner
             update_sidebar_status("Cleaner", MODELS["CLEANER"])
             st.write("**Cleaner**: 資料摘要中...")
             curated = call_ai(f"摘要重點評價：{raw_data}", MODELS["CLEANER"])
+            
+            with st.expander("📝 資料摘要", expanded=False):
+                st.markdown(curated)
 
             # 4. Panel Judges
-            st.write("⚖️ **Panel Judges**: 雙方評審正在評分...")
-            update_sidebar_status("Judges (Gemma & Gemini)", "Multi-Model")
+            st.write("⚖️ **Panel Judges**: 四方會談 (Gemma vs Gemini)...")
+            update_sidebar_status("Judges (x4)", "Multi-Model")
             
-            # 這裡回傳的是 JSON 物件了
             panel_res = agent_judge_panel(keywords, curated)
-            st.session_state.judge_results = panel_res # 存起來顯示用
+            st.session_state.judge_results = panel_res
             
+            with st.expander("🗣️ 查看四位評審意見", expanded=False):
+                c_a, c_b = st.columns(2)
+                with c_a:
+                    st.markdown("### 👨‍🏫 嚴格學術派")
+                    st.info(f"**Gemma 3**: {panel_res['A_Gemma']['score']}分\n{panel_res['A_Gemma']['comment']}")
+                    st.info(f"**Gemini 2.5**: {panel_res['A_Gemini']['score']}分\n{panel_res['A_Gemini']['comment']}")
+                with c_b:
+                    st.markdown("### 😎 甜涼快樂派")
+                    st.warning(f"**Gemma 3**: {panel_res['B_Gemma']['score']}分\n{panel_res['B_Gemma']['comment']}")
+                    st.warning(f"**Gemini 2.5**: {panel_res['B_Gemini']['score']}分\n{panel_res['B_Gemini']['comment']}")
+
             # 5. Synthesizer
             update_sidebar_status("Synthesizer", MODELS["SYNTHESIZER"])
             st.write("🏆 **Synthesizer**: 正在統整最終判決...")
@@ -368,15 +394,15 @@ if btn_search and user_input:
             if final_data:
                 st.session_state.analysis_result = final_data
                 
-                # 6. Illustrator (繪製三張圖)
+                # 6. Illustrator
                 update_sidebar_status("Illustrator", "Local")
                 st.write("🎨 **Illustrator**: 更新三張榜單...")
                 
-                # 繪製 Judge A 榜單
-                update_tier_list_image("A", user_input, panel_res['A'].get('tier', 'C'))
-                # 繪製 Judge B 榜單
-                update_tier_list_image("B", user_input, panel_res['B'].get('tier', 'C'))
-                # 繪製 綜合榜單
+                # [策略] 為了穩定性，榜單 A 採用 Gemini 2.5 (A_Gemini) 的判斷
+                update_tier_list_image("A", user_input, panel_res['A_Gemini'].get('tier', 'C'))
+                # [策略] 榜單 B 採用 Gemini 2.5 (B_Gemini) 的判斷
+                update_tier_list_image("B", user_input, panel_res['B_Gemini'].get('tier', 'C'))
+                # 綜合榜單
                 update_tier_list_image("Total", user_input, final_data.get('tier', 'C'))
                 
                 status.update(label="✅ 評審完成！", state="complete")
@@ -388,8 +414,13 @@ if btn_search and user_input:
             update_sidebar_status("Hunter", MODELS["HUNTER"])
             st.write("🕵️ **Hunter**: 搜尋熱門課程...")
             raw_data = search_google(keywords, mode="recommend")
+            with st.expander("📄 搜尋結果", expanded=False):
+                st.write(raw_data)
+            
+            st.write("🕵️ **Hunter**: 正在撰寫推薦報告...")
             res = agent_hunter(keywords, raw_data)
             st.markdown(res)
+            
             status.update(label="✅ 推薦完成", state="complete")
             update_sidebar_status("System", "Ready", "idle")
 
@@ -417,13 +448,7 @@ if st.session_state.analysis_result:
         
         st.success(d.get('reason'))
         st.write(d.get('details'))
-        
-        # 顯示個別評審分數
-        if judges:
-            st.divider()
-            st.caption("個別評審詳細數據：")
-            st.info(f"👨‍🏫 嚴格派 (Judge A): {judges['A'].get('score')}分 ({judges['A'].get('tier')}級)\n評語: {judges['A'].get('comment')}")
-            st.warning(f"😎 甜涼派 (Judge B): {judges['B'].get('score')}分 ({judges['B'].get('tier')}級)\n評語: {judges['B'].get('comment')}")
+        st.caption("標籤：" + ", ".join(d.get('tags', [])))
 
     with col_img:
         # 使用 Tabs 切換三張榜單
@@ -437,13 +462,13 @@ if st.session_state.analysis_result:
                 st.image(BASE_IMAGE_PATH, caption="尚無資料", use_column_width=True)
         
         with tab_total:
-            st.caption("綜合 Synthesizer 的最終決策")
+            st.caption("Synthesizer 綜合決策")
             show_tier_img(TIER_FILES["Total"])
             
         with tab_a:
-            st.caption("Judge A (Gemma 3) 的嚴格標準 ")
+            st.caption("嚴格學術派 (以 Gemini 2.5 觀點為主)")
             show_tier_img(TIER_FILES["A"])
             
         with tab_b:
-            st.caption("Judge B (Gemini 2.0) 的快樂標準")
+            st.caption("甜涼快樂派 (以 Gemini 2.5 觀點為主)")
             show_tier_img(TIER_FILES["B"])
