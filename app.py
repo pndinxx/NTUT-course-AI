@@ -415,19 +415,29 @@ if btn_search and user_input:
             else:
                 status.update(label="綜合分析失敗", state="error")
         else:
+            # === 推薦模式 (Hunter Mode) ===
             update_sidebar_status("Hunter", MODELS["HUNTER"])
             st.write("**Hunter**: 搜尋熱門課程...")
+            
+            # 1. 搜尋 (Search)
             raw_data = search_hybrid(keywords, mode="recommend")
             
-            # [修改] Hunter 模式的搜尋結果也改成小字列表
-            with st.expander(" 搜尋結果", expanded=False):
+            with st.expander(" 原始搜尋結果", expanded=False):
                 for item in raw_data:
                     st.markdown(f'<div style="font-size: 13px; line-height: 1.4; white-space: pre-wrap;">{item}</div>', unsafe_allow_html=True)
                     st.divider()
             
+            # 2. 清理 (Cleaner) -> 關鍵修改：Hunter 現在也用 Cleaner 了
+            st.write("**Cleaner**: 正在過濾雜訊...")
+            curated = agent_cleaner(keywords, raw_data)
+            
+            # 3. 推薦 (Hunter)
             st.write("**Hunter**: 正在撰寫推薦報告...")
-            res = agent_hunter(keywords, raw_data)
+            # 這裡傳入的是 curated (清理後的資料)，而不是 raw_data
+            res = agent_hunter(keywords, curated)
+            
             st.markdown(res)
+            
             status.update(label="推薦完成", state="complete")
             update_sidebar_status("System", "Ready", "idle")
 
