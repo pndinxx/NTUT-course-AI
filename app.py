@@ -350,7 +350,7 @@ if btn_search and user_input:
         if intent == "analyze":
             # 2. Search
             update_sidebar_status("Search Engine", "Google API")
-            st.write(f"🔍 **Search**: 廣域搜尋中...")
+            st.write(f"**Search**: 廣域搜尋中...")
             raw_data = search_google(keywords, mode="analysis")
             if not raw_data: st.stop()
             
@@ -364,30 +364,30 @@ if btn_search and user_input:
             st.write("**Cleaner**: 資料摘要中...")
             curated = call_ai(f"摘要重點評價：{raw_data}", MODELS["CLEANER"])
             
-            with st.expander("📝 資料摘要", expanded=False):
+            with st.expander("資料摘要", expanded=False):
                 st.markdown(curated)
 
             # 4. Panel Judges
-            st.write("⚖️ **Panel Judges**: 四方會談 (Gemma vs Gemini)...")
+            st.write("**Panel Judges**: 四方會談 (Gemma vs Gemini)...")
             update_sidebar_status("Judges (x4)", "Multi-Model")
             
             panel_res = agent_judge_panel(keywords, curated)
             st.session_state.judge_results = panel_res
             
-            with st.expander("🗣️ 查看四位評審意見", expanded=False):
+            with st.expander("查看四位評審意見", expanded=False):
                 c_a, c_b = st.columns(2)
                 with c_a:
-                    st.markdown("### 👨‍🏫 嚴格學術派")
+                    st.markdown("###嚴格學術派")
                     st.info(f"**Gemma 3**: {panel_res['A_Gemma']['score']}分\n{panel_res['A_Gemma']['comment']}")
                     st.info(f"**Gemini 2.5**: {panel_res['A_Gemini']['score']}分\n{panel_res['A_Gemini']['comment']}")
                 with c_b:
-                    st.markdown("### 😎 甜涼快樂派")
+                    st.markdown("###甜涼快樂派")
                     st.warning(f"**Gemma 3**: {panel_res['B_Gemma']['score']}分\n{panel_res['B_Gemma']['comment']}")
                     st.warning(f"**Gemini 2.5**: {panel_res['B_Gemini']['score']}分\n{panel_res['B_Gemini']['comment']}")
 
             # 5. Synthesizer
             update_sidebar_status("Synthesizer", MODELS["SYNTHESIZER"])
-            st.write("🏆 **Synthesizer**: 正在統整最終判決...")
+            st.write("**Synthesizer**: 正在統整最終判決...")
             final_raw = agent_synthesizer(keywords, panel_res)
             final_data = agent_fixer(final_raw)
             
@@ -396,7 +396,7 @@ if btn_search and user_input:
                 
                 # 6. Illustrator
                 update_sidebar_status("Illustrator", "Local")
-                st.write("🎨 **Illustrator**: 更新三張榜單...")
+                st.write("**Illustrator**: 更新三張榜單...")
                 
                 # [策略] 為了穩定性，榜單 A 採用 Gemini 2.5 (A_Gemini) 的判斷
                 update_tier_list_image("A", user_input, panel_res['A_Gemini'].get('tier', 'C'))
@@ -405,23 +405,23 @@ if btn_search and user_input:
                 # 綜合榜單
                 update_tier_list_image("Total", user_input, final_data.get('tier', 'C'))
                 
-                status.update(label="✅ 評審完成！", state="complete")
+                status.update(label="評審完成！", state="complete")
                 update_sidebar_status("System", "Ready", "idle")
             else:
-                status.update(label="❌ 綜合分析失敗", state="error")
+                status.update(label="綜合分析失敗", state="error")
         else:
             # 推薦模式
             update_sidebar_status("Hunter", MODELS["HUNTER"])
-            st.write("🕵️ **Hunter**: 搜尋熱門課程...")
+            st.write("**Hunter**: 搜尋熱門課程...")
             raw_data = search_google(keywords, mode="recommend")
-            with st.expander("📄 搜尋結果", expanded=False):
+            with st.expander(" 搜尋結果", expanded=False):
                 st.write(raw_data)
             
-            st.write("🕵️ **Hunter**: 正在撰寫推薦報告...")
+            st.write("**Hunter**: 正在撰寫推薦報告...")
             res = agent_hunter(keywords, raw_data)
             st.markdown(res)
             
-            status.update(label="✅ 推薦完成", state="complete")
+            status.update(label="推薦完成", state="complete")
             update_sidebar_status("System", "Ready", "idle")
 
 # ==========================================
@@ -435,16 +435,16 @@ if st.session_state.analysis_result:
     col_res, col_img = st.columns([1.5, 2])
     
     with col_res:
-        st.subheader("📝 最終決策報告")
+        st.subheader("最終決策報告")
         st.metric("綜合評分", f"{d.get('score')} 分", d.get('tier'))
         st.markdown(f"### {d.get('rank')}")
         
         stars = d.get('star_ratings', {})
         if stars:
             c1, c2, c3 = st.columns(3)
-            c1.metric("📚 內涵", stars.get('learning', 'N/A'))
-            c2.metric("😎 輕鬆", stars.get('chill', 'N/A'))
-            c3.metric("🍭 甜度", stars.get('sweet', 'N/A'))
+            c1.metric("內涵", stars.get('learning', 'N/A'))
+            c2.metric("輕鬆", stars.get('chill', 'N/A'))
+            c3.metric("甜度", stars.get('sweet', 'N/A'))
         
         st.success(d.get('reason'))
         st.write(d.get('details'))
@@ -452,7 +452,7 @@ if st.session_state.analysis_result:
 
     with col_img:
         # 使用 Tabs 切換三張榜單
-        tab_total, tab_a, tab_b = st.tabs(["🏆 綜合榜單", "👨‍🏫 嚴格派榜單", "😎 甜涼派榜單"])
+        tab_total, tab_a, tab_b = st.tabs(["綜合榜單", "嚴格派榜單", "甜涼派榜單"])
         
         def show_tier_img(fname):
             path = os.path.join(BASE_DIR, fname)
