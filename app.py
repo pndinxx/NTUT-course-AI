@@ -12,13 +12,20 @@ from PIL import Image, ImageDraw, ImageFont
 # ==========================================
 st.set_page_config(page_title="北科大 AI 課程推薦系統", layout="wide")
 
-try:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
-    GOOGLE_SEARCH_API_KEY = st.secrets["GOOGLE_SEARCH_API_KEY"]
-    SEARCH_ENGINE_ID = st.secrets["SEARCH_ENGINE_ID"]
-    TAVILY_API_KEY = st.secrets("TAVILY_API_KEY")
-except:
-    GEMINI_API_KEY = None; GOOGLE_SEARCH_API_KEY = None; SEARCH_ENGINE_ID = None
+# 改良後的寫法
+def get_secret(key):
+    # 嘗試從 st.secrets 讀取，失敗則回傳 None
+    if key in st.secrets:
+        return st.secrets[key]
+    # (可選) 嘗試從環境變數讀取 (適合部署在 Render/Heroku 等平台)
+    if os.getenv(key):
+        return os.getenv(key)
+    return None
+
+GEMINI_API_KEY = get_secret("GEMINI_API_KEY")
+GOOGLE_SEARCH_API_KEY = get_secret("GOOGLE_SEARCH_API_KEY")
+SEARCH_ENGINE_ID = get_secret("SEARCH_ENGINE_ID")
+TAVILY_API_KEY = get_secret("TAVILY_API_KEY")
 
 if not GEMINI_API_KEY:
     with st.sidebar:
