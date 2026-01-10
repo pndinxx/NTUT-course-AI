@@ -346,7 +346,6 @@ def agent_judge_panel(course_name, data):
     }
 
 def agent_synthesizer(course_name, panel_results):
-    # 使用原本您指定的包含星星評等的 Prompt 標準
     import json
     panel_text = json.dumps(panel_results, ensure_ascii=False, indent=2)
 
@@ -373,9 +372,9 @@ def agent_synthesizer(course_name, panel_results):
         "tier": "B", 
         "score": 75,
         "star_ratings": {{
-            "learning": "★★★★★" \n,
-            "chill": "★★☆☆☆" \n,
-            "sweet": "★★☆☆☆" \n
+            "learning": "★★★★★",
+            "chill": "★★☆☆☆",
+            "sweet": "★★☆☆☆"
         }},
         "reason": "學得到很多但非常累，想混分勿選", 
         "tags": ["紮實", "大刀"], 
